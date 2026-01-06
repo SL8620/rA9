@@ -161,7 +161,8 @@ void HumanoidInterface::setupOptimalControlProblem(const std::string& taskFile, 
   bool useAnalyticalGradientsConstraints = false;
   loadData::loadCppDataType(taskFile, "humanoid_interface.useAnalyticalGradientsConstraints", useAnalyticalGradientsConstraints);
   for (size_t i = 0; i < centroidalModelInfo_.numThreeDofContacts; i++) {
-    const std::string& footName = modelSettings_.contactNames3DoF[i];
+    const std::string footFrame = modelSettings_.contactNames3DoF[i];
+    const std::string constraintPrefix = footFrame + "_" + std::to_string(i);
 
     std::unique_ptr<EndEffectorKinematics<scalar_t>> eeKinematicsPtr;
     if (useAnalyticalGradientsConstraints) {
@@ -174,26 +175,26 @@ void HumanoidInterface::setupOptimalControlProblem(const std::string& taskFile, 
         const ad_vector_t q = centroidal_model::getGeneralizedCoordinates(state, infoCppAd);
         updateCentroidalDynamics(pinocchioInterfaceAd, infoCppAd, q);
       };
-      eeKinematicsPtr.reset(new PinocchioEndEffectorKinematicsCppAd(*pinocchioInterfacePtr_, pinocchioMappingCppAd, {footName},
+      eeKinematicsPtr.reset(new PinocchioEndEffectorKinematicsCppAd(*pinocchioInterfacePtr_, pinocchioMappingCppAd, {footFrame},
                                                                     centroidalModelInfo_.stateDim, centroidalModelInfo_.inputDim,
-                                                                    velocityUpdateCallback, footName, modelSettings_.modelFolderCppAd,
+                            velocityUpdateCallback, constraintPrefix, modelSettings_.modelFolderCppAd,
                                                                     modelSettings_.recompileLibrariesCppAd, modelSettings_.verboseCppAd));
     }
 
     if (useHardFrictionConeConstraint_) {
-      problemPtr_->inequalityConstraintPtr->add(footName + "_frictionCone", getFrictionConeConstraint(i, frictionCoefficient));
+      problemPtr_->inequalityConstraintPtr->add(constraintPrefix + "_frictionCone", getFrictionConeConstraint(i, frictionCoefficient));
     } else {
-      problemPtr_->softConstraintPtr->add(footName + "_frictionCone",
+      problemPtr_->softConstraintPtr->add(constraintPrefix + "_frictionCone",
                                           getFrictionConeSoftConstraint(i, frictionCoefficient, barrierPenaltyConfig));
     }
-    problemPtr_->equalityConstraintPtr->add(footName + "_zeroForce", getZeroForceConstraint(i));
-    problemPtr_->equalityConstraintPtr->add(footName + "_zeroVelocity",
+    problemPtr_->equalityConstraintPtr->add(constraintPrefix + "_zeroForce", getZeroForceConstraint(i));
+    problemPtr_->equalityConstraintPtr->add(constraintPrefix + "_zeroVelocity",
                                             getZeroVelocityConstraint(*eeKinematicsPtr, i, useAnalyticalGradientsConstraints));
-    problemPtr_->equalityConstraintPtr->add(footName + "_normalVelocity",
+    problemPtr_->equalityConstraintPtr->add(constraintPrefix + "_normalVelocity",
                                             getNormalVelocityConstraint(*eeKinematicsPtr, i, useAnalyticalGradientsConstraints));
     // 由于一只脚上有两个虚拟接触点，只需要给其中一个接触点添加滚转角约束
-      if (i < 2){
-          problemPtr_->equalityConstraintPtr->add(footName + "_footRoll", getFootRollConstraint(i));
+        if (i < 2){
+          problemPtr_->equalityConstraintPtr->add(constraintPrefix + "_footRoll", getFootRollConstraint(i));
       }
     }
             // Self-collision avoidance constraint

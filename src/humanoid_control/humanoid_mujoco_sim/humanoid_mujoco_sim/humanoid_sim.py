@@ -14,8 +14,14 @@ from threading import Thread
 from rclpy.time import Time
 import array
 
-init_joint_pos = np.array([0.0, 0.0, 0.37, 0.90, 0.53, 0, 0.0, 0.0, 0.37, 0.90, 0.53, 0])
-init_base_pos = np.array([0, 0, 0.82])
+# Initial joint configuration and base pose should be consistent with
+# humanoid_interface/config/command/reference_.info (defaultJointState)
+# and humanoid_interface/config/mpc/task_.info (initialState).
+init_joint_pos = np.array([
+  0.0, 0.0, -0.37, 0.9, -0.53, 0.0,
+  0.0, 0.0, -0.37, 0.9, -0.53, 0.0,
+])
+init_base_pos = np.array([0.0, 0.0, 0.955])
 init_base_eular_zyx = np.array([0.0, -0., 0.0])
 imu_eular_bias = np.array([0.0, 0.0, 0.0])
 
@@ -35,10 +41,12 @@ class HumanoidSim(MuJoCoBase):
     # mj.set_mjcb_control(self.controller)
     # * Set subscriber and publisher
 
-    # initialize target joint position, velocity, and torque
+    # initialize target joint position, velocity, torque and PD gains
     self.targetPos = init_joint_pos
     self.targetVel = np.zeros(12)
     self.targetTorque = np.zeros(12)
+    # default PD gains (will be overwritten when /targetKp, /targetKd are received)
+    # revert to original behavior: start from zero gains and rely on controller topics
     self.targetKp = np.zeros(12)
     self.targetKd = np.zeros(12)
 
