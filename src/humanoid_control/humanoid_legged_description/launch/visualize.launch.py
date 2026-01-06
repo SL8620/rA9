@@ -7,7 +7,7 @@ from ament_index_python.packages import get_package_share_directory
 
 def get_urdf_file(robot_name):
 
-    urdf_file = get_package_share_directory('humanoid_legged_description') + "/urdf/humanoid_legged_control.urdf"
+    urdf_file = get_package_share_directory('humanoid_legged_description') + "/urdf/humanoid_legged_control_.urdf"
     return urdf_file
 
 

@@ -67,145 +67,63 @@ Visualization Manager:
         Expand Link Details: false
         Expand Tree: false
         Link Tree Style: Links in Alphabetic Order
-        arm_l1_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        arm_l2_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        arm_l3_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        arm_l4_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        arm_l5_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        arm_l6_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        arm_r1_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        arm_r2_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        arm_r3_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        arm_r4_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        arm_r5_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        arm_r6_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
         base_link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
-        dummy_link:
+        Hip_L_Roll_Link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-        head_yaw_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        l_foot_heel:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        l_foot_toe:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        leg_l1_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        leg_l2_link:
+        Hip_L_Yaw_Link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
-        leg_l3_link:
+        Hip_L_Pitch_Link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
-        leg_l4_link:
+        Knee_L_Pitch_Link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
-        leg_l5_link:
+        Ankle_L_Pitch_Link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-        leg_l6_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        leg_r1_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        leg_r2_link:
+        Ankle_L_Roll_Link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
-        leg_r3_link:
+        Hip_R_Roll_Link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        Hip_R_Yaw_Link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
-        leg_r4_link:
+        Hip_R_Pitch_Link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
-        leg_r5_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        leg_r6_link:
+        Knee_R_Pitch_Link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
-        r_foot_heel:
+        Ankle_R_Pitch_Link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-        r_foot_toe:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        waist_yaw_link:
+        Ankle_R_Pitch_Link:
           Alpha: 1
           Show Axes: false
           Show Trail: false

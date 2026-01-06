@@ -1,1 +1,3 @@
-controller_joint_names: ['', 'leg_l1_joint', 'leg_l2_joint', 'leg_l3_joint', 'leg_l4_joint', 'leg_l5_joint', 'leg_l6_joint', 'leg_r1_joint', 'leg_r2_joint', 'leg_r3_joint', 'leg_r4_joint', 'leg_r5_joint', 'leg_r6_joint', ]
+# controller_joint_names: ['', 'leg_l1_joint', 'leg_l2_joint', 'leg_l3_joint', 'leg_l4_joint', 'leg_l5_joint', 'leg_l6_joint', 'leg_r1_joint', 'leg_r2_joint', 'leg_r3_joint', 'leg_r4_joint', 'leg_r5_joint', 'leg_r6_joint', ]
+
+controller_joint_names: ['', 'Hip_L_Roll_Joint', 'Hip_L_Yaw_Joint', 'Hip_L_Pitch_Joint', 'Knee_L_Pitch_Joint', 'Ankle_L_Pitch_Joint', 'Ankle_L_Roll_Joint', 'Hip_R_Roll_Joint', 'Hip_R_Yaw_Joint', 'Hip_R_Pitch_Joint', 'Knee_R_Pitch_Joint', 'Ankle_R_Pitch_Joint', 'Ankle_R_Roll_Joint', ]
