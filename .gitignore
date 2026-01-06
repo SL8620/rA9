@@ -1,0 +1,25 @@
+# Colcon / ROS 2 workspace artifacts
+build/
+install/
+log/
+
+# VS Code / IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Misc
+*.swp
+*.swo
+.DS_Store
