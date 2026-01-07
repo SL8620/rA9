@@ -72,6 +72,18 @@ Visualization Manager:
           Show Axes: false
           Show Trail: false
           Value: true
+        dummy_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false 
+        l_foot_heel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        l_foot_toe:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
         Hip_L_Roll_Link:
           Alpha: 1
           Show Axes: false
@@ -123,11 +135,19 @@ Visualization Manager:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-        Ankle_R_Pitch_Link:
+        Ankle_R_Roll_Link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
+        r_foot_heel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        r_foot_toe:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
       Mass Properties:
         Inertia: false
         Mass: false

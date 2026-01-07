@@ -60,8 +60,7 @@ bool humanoidController::init(rclcpp::Node::SharedPtr &controller_nh) {
   //TODO: setup hardware controller interface
   //create a ROS subscriber to receive the joint pos and vel
   jointPos_ = vector_t::Zero(jointNum_);
-  jointPos_ << 0.0, 0.0, -0.37, 0.9, -0.53, 0.0,
-                0.0, 0.0, -0.37, 0.9, -0.53, 0.0;
+  jointPos_ << 0.0, 0.0, -0.37, 0.9, -0.53, 0.0, 0.0, 0.0, -0.37, 0.9, -0.53, 0.0;
   jointVel_ = vector_t::Zero(jointNum_);
   quat_ = Eigen::Quaternion<scalar_t>(1, 0, 0, 0);
 

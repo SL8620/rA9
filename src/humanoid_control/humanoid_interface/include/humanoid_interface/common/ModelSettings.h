@@ -54,8 +54,7 @@ struct ModelSettings {
   std::vector<std::string> contactNames6DoF{};
   // Use ankle roll links as contact frames for toe/heel on each foot
   // Order: LF, LH, RF, RH -> here LF/LH share left ankle frame, RF/RH share right ankle frame
-  std::vector<std::string> contactNames3DoF{"Ankle_L_Roll_Link", "Ankle_L_Roll_Link",
-                                            "Ankle_R_Roll_Link", "Ankle_R_Roll_Link"};
+  std::vector<std::string> contactNames3DoF{"l_foot_toe", "r_foot_toe", "l_foot_heel", "r_foot_heel"};
 };
 
 ModelSettings loadModelSettings(const std::string& filename, const std::string& fieldName = "model_settings", bool verbose = "true");

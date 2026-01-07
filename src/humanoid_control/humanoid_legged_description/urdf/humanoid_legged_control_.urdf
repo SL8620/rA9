@@ -88,7 +88,7 @@
   <joint name="dummy_to_base_link" type="fixed">
     <parent link="dummy_link"/>
     <child link="base_link"/>
-    <origin rpy="0 0 0" xyz="0 0.133 0.03605"/>
+    <origin rpy="0 0 0" xyz="-0.3605 0 -0.133"/>
   </joint>
   <link name="Hip_L_Roll_Link">
     <inertial>
@@ -310,13 +310,13 @@
   </joint>
   <link name="l_foot_toe"> </link>
   <joint name="l_foot_toe_joint" type="fixed">
-    <origin xyz="0.15484 0 -0.068" rpy="0 0 0" />
+    <origin xyz="0.15484 0 -0.0725" rpy="0 0 0" />
     <parent link="Ankle_L_Roll_Link" />
     <child link="l_foot_toe" />
   </joint>
   <link name="l_foot_heel"> </link>
   <joint name="l_foot_heel_joint" type="fixed">
-    <origin xyz="-0.08326  0 -0.068" rpy="0 0 0" />
+    <origin xyz="-0.08326  0 -0.0725" rpy="0 0 0" />
     <parent link="Ankle_L_Roll_Link" />
     <child link="l_foot_heel" />
   </joint>
@@ -540,13 +540,13 @@
   </joint>
   <link name="r_foot_toe"> </link>
   <joint name="r_foot_toe_joint" type="fixed">
-    <origin xyz="0.15484 0 -0.068" rpy="0 0 0" />
+    <origin xyz="0.15484 0 -0.0725" rpy="0 0 0" />
     <parent link="Ankle_R_Roll_Link" />
     <child link="r_foot_toe" />
   </joint>
   <link name="r_foot_heel"> </link>
   <joint name="r_foot_heel_joint" type="fixed">
-    <origin xyz="-0.08326  0 -0.068" rpy="0 0 0" />
+    <origin xyz="-0.08326  0 -0.0725" rpy="0 0 0" />
     <parent link="Ankle_R_Roll_Link" />
     <child link="r_foot_heel" />
   </joint>

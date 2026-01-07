@@ -160,57 +160,59 @@ void HumanoidInterface::setupOptimalControlProblem(const std::string& taskFile, 
 
   bool useAnalyticalGradientsConstraints = false;
   loadData::loadCppDataType(taskFile, "humanoid_interface.useAnalyticalGradientsConstraints", useAnalyticalGradientsConstraints);
-  for (size_t i = 0; i < centroidalModelInfo_.numThreeDofContacts; i++) {
-    const std::string footFrame = modelSettings_.contactNames3DoF[i];
-    const std::string constraintPrefix = footFrame + "_" + std::to_string(i);
+  for (size_t i = 0; i < centroidalModelInfo_.numThreeDofContacts; i++) 
+  {
+		const std::string footFrame = modelSettings_.contactNames3DoF[i];
+		const std::string constraintPrefix = footFrame + "_" + std::to_string(i);
 
-    std::unique_ptr<EndEffectorKinematics<scalar_t>> eeKinematicsPtr;
-    if (useAnalyticalGradientsConstraints) {
-      throw std::runtime_error(
-          "[HumanoidInterface::setupOptimalControlProblem] The analytical end-effector linear constraint is not implemented!");
-    } else {
-      const auto infoCppAd = centroidalModelInfo_.toCppAd();
-      const CentroidalModelPinocchioMappingCppAd pinocchioMappingCppAd(infoCppAd);
-      auto velocityUpdateCallback = [&infoCppAd](const ad_vector_t& state, PinocchioInterfaceCppAd& pinocchioInterfaceAd) {
-        const ad_vector_t q = centroidal_model::getGeneralizedCoordinates(state, infoCppAd);
-        updateCentroidalDynamics(pinocchioInterfaceAd, infoCppAd, q);
-      };
-      eeKinematicsPtr.reset(new PinocchioEndEffectorKinematicsCppAd(*pinocchioInterfacePtr_, pinocchioMappingCppAd, {footFrame},
-                                                                    centroidalModelInfo_.stateDim, centroidalModelInfo_.inputDim,
-                            velocityUpdateCallback, constraintPrefix, modelSettings_.modelFolderCppAd,
-                                                                    modelSettings_.recompileLibrariesCppAd, modelSettings_.verboseCppAd));
-    }
+		std::unique_ptr<EndEffectorKinematics<scalar_t>> eeKinematicsPtr;
+		if (useAnalyticalGradientsConstraints) 
+		{
+			throw std::runtime_error("[HumanoidInterface::setupOptimalControlProblem] The analytical end-effector linear constraint is not implemented!");
+		} 
+		else 
+		{
+		const auto infoCppAd = centroidalModelInfo_.toCppAd();
+		const CentroidalModelPinocchioMappingCppAd pinocchioMappingCppAd(infoCppAd);
+		auto velocityUpdateCallback = [&infoCppAd](const ad_vector_t& state, PinocchioInterfaceCppAd& pinocchioInterfaceAd) {
+			const ad_vector_t q = centroidal_model::getGeneralizedCoordinates(state, infoCppAd);
+			updateCentroidalDynamics(pinocchioInterfaceAd, infoCppAd, q);
+		};
+		eeKinematicsPtr.reset(new PinocchioEndEffectorKinematicsCppAd(
+			*pinocchioInterfacePtr_, pinocchioMappingCppAd, {footFrame}, centroidalModelInfo_.stateDim, centroidalModelInfo_.inputDim,
+			velocityUpdateCallback, constraintPrefix, modelSettings_.modelFolderCppAd, modelSettings_.recompileLibrariesCppAd, modelSettings_.verboseCppAd));
+		}
 
-    if (useHardFrictionConeConstraint_) {
-      problemPtr_->inequalityConstraintPtr->add(constraintPrefix + "_frictionCone", getFrictionConeConstraint(i, frictionCoefficient));
-    } else {
-      problemPtr_->softConstraintPtr->add(constraintPrefix + "_frictionCone",
-                                          getFrictionConeSoftConstraint(i, frictionCoefficient, barrierPenaltyConfig));
-    }
-    problemPtr_->equalityConstraintPtr->add(constraintPrefix + "_zeroForce", getZeroForceConstraint(i));
-    problemPtr_->equalityConstraintPtr->add(constraintPrefix + "_zeroVelocity",
-                                            getZeroVelocityConstraint(*eeKinematicsPtr, i, useAnalyticalGradientsConstraints));
-    problemPtr_->equalityConstraintPtr->add(constraintPrefix + "_normalVelocity",
-                                            getNormalVelocityConstraint(*eeKinematicsPtr, i, useAnalyticalGradientsConstraints));
-    // 由于一只脚上有两个虚拟接触点，只需要给其中一个接触点添加滚转角约束
-        if (i < 2){
-          problemPtr_->equalityConstraintPtr->add(constraintPrefix + "_footRoll", getFootRollConstraint(i));
-      }
+		if (useHardFrictionConeConstraint_) 
+		{
+			problemPtr_->inequalityConstraintPtr->add(constraintPrefix + "_frictionCone", getFrictionConeConstraint(i, frictionCoefficient));
+		} 
+		else 
+		{
+			problemPtr_->softConstraintPtr->add(constraintPrefix + "_frictionCone", getFrictionConeSoftConstraint(i, frictionCoefficient, barrierPenaltyConfig));
+		}
+		problemPtr_->equalityConstraintPtr->add(constraintPrefix + "_zeroForce", getZeroForceConstraint(i));
+		problemPtr_->equalityConstraintPtr->add(constraintPrefix + "_zeroVelocity", getZeroVelocityConstraint(*eeKinematicsPtr, i, useAnalyticalGradientsConstraints));
+		problemPtr_->equalityConstraintPtr->add(constraintPrefix + "_normalVelocity", getNormalVelocityConstraint(*eeKinematicsPtr, i, useAnalyticalGradientsConstraints));
+		// 由于一只脚上有两个虚拟接触点，只需要给其中一个接触点添加滚转角约束
+		if (i < 2)
+		{
+			problemPtr_->equalityConstraintPtr->add(constraintPrefix + "_footRoll", getFootRollConstraint(i));
+		}
     }
             // Self-collision avoidance constraint
-    problemPtr_->stateSoftConstraintPtr->add("selfCollision",
-                                                     getSelfCollisionConstraint(*pinocchioInterfacePtr_, taskFile, "selfCollision", verbose));
+    problemPtr_->stateSoftConstraintPtr->add("selfCollision", getSelfCollisionConstraint(*pinocchioInterfacePtr_, taskFile, "selfCollision", verbose));
 
-  // Pre-computation
-  problemPtr_->preComputationPtr.reset(new HumanoidPreComputation(*pinocchioInterfacePtr_, centroidalModelInfo_,
-                                                                     *referenceManagerPtr_->getSwingTrajectoryPlanner(), modelSettings_));
+	// Pre-computation
+	problemPtr_->preComputationPtr.reset(new HumanoidPreComputation(
+		*pinocchioInterfacePtr_, centroidalModelInfo_, *referenceManagerPtr_->getSwingTrajectoryPlanner(), modelSettings_));
 
-  // Rollout
-  rolloutPtr_.reset(new TimeTriggeredRollout(*problemPtr_->dynamicsPtr, rolloutSettings_));
+	// Rollout
+	rolloutPtr_.reset(new TimeTriggeredRollout(*problemPtr_->dynamicsPtr, rolloutSettings_));
 
-  // Initialization
-  constexpr bool extendNormalizedMomentum = true;
-  initializerPtr_.reset(new HumanoidInitializer(centroidalModelInfo_, *referenceManagerPtr_, extendNormalizedMomentum));
+	// Initialization
+	constexpr bool extendNormalizedMomentum = true;
+	initializerPtr_.reset(new HumanoidInitializer(centroidalModelInfo_, *referenceManagerPtr_, extendNormalizedMomentum));
 }
 
 /******************************************************************************************************/

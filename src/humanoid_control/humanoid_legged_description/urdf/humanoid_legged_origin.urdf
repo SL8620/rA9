@@ -33,43 +33,43 @@
     <collision>
       <origin xyz="0.01 0.24 0.3" rpy="0 1.57 0" />
       <geometry>
-        <cylinder radius="0.06" length="0.09 "/>
+        <cylinder radius="0.06" length="0.09"/>
       </geometry>
     </collision>
     <collision>
       <origin xyz="0.01 0.25 0.13" rpy="0 0 0" />
       <geometry>
-        <cylinder radius="0.04" length="0.15 "/>
+        <cylinder radius="0.04" length="0.15"/>
       </geometry>
     </collision>
     <collision>
       <origin xyz="0.26 0.25 0.08" rpy="0 1.57 0" />
       <geometry>
-        <cylinder radius="0.04" length="0.4 "/>
+        <cylinder radius="0.04" length="0.4"/>
       </geometry>
     </collision>
     <collision>
       <origin xyz="0.01 -0.24 0.3" rpy="0 1.57 0" />
       <geometry>
-        <cylinder radius="0.06" length="0.09 "/>
+        <cylinder radius="0.06" length="0.09"/>
       </geometry>
     </collision>
     <collision>
       <origin xyz="0.01 -0.25 0.13" rpy="0 0 0" />
       <geometry>
-        <cylinder radius="0.04" length="0.15 "/>
+        <cylinder radius="0.04" length="0.15"/>
       </geometry>
     </collision>
     <collision>
       <origin xyz="0.26 -0.25 0.08" rpy="0 1.57 0" />
       <geometry>
-        <cylinder radius="0.04" length="0.4 "/>
+        <cylinder radius="0.04" length="0.4"/>
       </geometry>
     </collision>
     <collision>
       <origin xyz="-0.08 -0.125 -0.1" rpy="0 1.57 0" />
       <geometry>
-        <cylinder radius="0.07" length="0.072 "/>
+        <cylinder radius="0.07" length="0.072"/>
       </geometry>
     </collision>
     <collision>
@@ -88,7 +88,7 @@
   <joint name="dummy_to_base_link" type="fixed">
     <parent link="dummy_link"/>
     <child link="base_link"/>
-    <origin rpy="0 0 0" xyz="0 0.133 0.03605"/>
+    <origin rpy="0 0 0" xyz="-0.3605 0 -0.133"/>
   </joint>
   <link name="Hip_L_Roll_Link">
     <inertial>
@@ -308,6 +308,20 @@
     <axis xyz="1 0 0" />
     <limit lower="-0.35" upper="0.35" effort="200" velocity="5" />
   </joint>
+  <link name="l_foot_toe"> </link>
+  <joint name="l_foot_toe_joint" type="fixed">
+    <origin xyz="0.15484 0 -0.0725" rpy="0 0 0" />
+    <parent link="Ankle_L_Roll_Link" />
+    <child link="l_foot_toe" />
+  </joint>
+  <link name="l_foot_heel"> </link>
+  <joint name="l_foot_heel_joint" type="fixed">
+    <origin xyz="-0.08326  0 -0.0725" rpy="0 0 0" />
+    <parent link="Ankle_L_Roll_Link" />
+    <child link="l_foot_heel" />
+  </joint>
+
+
   <link name="Hip_R_Roll_Link">
     <inertial>
       <origin xyz="0.078109 0 0.024666" rpy="0 0 0" />
@@ -523,5 +537,17 @@
     <child link="Ankle_R_Roll_Link" />
     <axis xyz="1 0 0" />
     <limit lower="-0.35" upper="0.35" effort="200" velocity="5" />
+  </joint>
+  <link name="r_foot_toe"> </link>
+  <joint name="r_foot_toe_joint" type="fixed">
+    <origin xyz="0.15484 0 -0.0725" rpy="0 0 0" />
+    <parent link="Ankle_R_Roll_Link" />
+    <child link="r_foot_toe" />
+  </joint>
+  <link name="r_foot_heel"> </link>
+  <joint name="r_foot_heel_joint" type="fixed">
+    <origin xyz="-0.08326  0 -0.0725" rpy="0 0 0" />
+    <parent link="Ankle_R_Roll_Link" />
+    <child link="r_foot_heel" />
   </joint>
 </robot>
