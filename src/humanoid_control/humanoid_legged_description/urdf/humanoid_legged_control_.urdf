@@ -88,7 +88,7 @@
   <joint name="dummy_to_base_link" type="fixed">
     <parent link="dummy_link"/>
     <child link="base_link"/>
-    <origin rpy="0 0 0" xyz="-0.3605 0 -0.133"/>
+    <origin rpy="0 0 0" xyz="-0.3605 0 0.129"/>
   </joint>
   <link name="Hip_L_Roll_Link">
     <inertial>
