@@ -58,6 +58,20 @@ class HumanoidSim(MuJoCoBase):
     self.node.create_subscription(Float32MultiArray, "/targetVel", self.targetVelCallback,2)
     self.node.create_subscription(Float32MultiArray, "/targetKp", self.targetKpCallback,2)
     self.node.create_subscription(Float32MultiArray, "/targetKd", self.targetKdCallback,2)
+    # 脚本化暂停控制：/pauseCmd True=暂停 False=继续（默认启动即暂停，
+    # 键盘 SPACE 仍可切换；实验脚本用本话题解除，免去手动按键）。
+    # 注意：回调只置"请求"，由 simulate() 渲染线程按 SPACE 键完全相同的
+    # 代码路径消费（置位 + mj_forward）—— 早期版本在自旋线程直接置位
+    # pause_flag，机器人解暂停后 1.5s 内发散，机制差异未排除前不得回退。
+    self.pause_request = None
+    self.node.create_subscription(Bool, "/pauseCmd", lambda m: setattr(self, 'pause_request', bool(m.data)), 2)
+    # /resetCmd: 复位机器人到初始站立状态（等价 MuJoCo 窗口 BACKSPACE 的
+    # 语义但用与 __init__ 相同的初始位形）。请求同样由渲染线程消费。
+    self.reset_request = False
+    self.node.create_subscription(Bool, "/resetCmd", lambda m: setattr(self, 'reset_request', True), 2)
+    # 批量实验模式：render:=false 跳过渲染/vsync（见 simulate() 内注释，
+    # 渲染节拍会把物理拖到 ~0.5× 墙钟导致控制器失稳）
+    self.render_enabled = self.node.declare_parameter('render', True).value
     #set the initial joint position
     self.data.qpos[:3] = init_base_pos
     # init rpy to init quaternion
@@ -149,6 +163,20 @@ class HumanoidSim(MuJoCoBase):
     torque_publish_time = self.data.time
     sim_epoch_start = time.time()
     while not glfw.window_should_close(self.window):
+      # 消费 /pauseCmd 请求 —— 与 SPACE 键盘回调完全相同的路径（置位 + mj_forward）
+      if self.pause_request is not None:
+        self.pause_flag = self.pause_request
+        self.pause_request = None
+        mj.mj_forward(self.model, self.data)
+      # 消费 /resetCmd 请求：复位到与 __init__ 相同的初始站立状态
+      if self.reset_request:
+        self.reset_request = False
+        self.data.qpos[:3] = init_base_pos
+        q_xyzw = R.from_euler('xyz', init_base_eular_zyx).as_quat()
+        self.data.qpos[3:7] = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]])
+        self.data.qpos[-12:] = init_joint_pos
+        self.data.qvel[:] = np.zeros_like(self.data.qvel)
+        mj.mj_forward(self.model, self.data)
       simstart = self.data.time
 
       while (self.data.time - simstart <= 1.0/60.0 and not self.pause_flag):
@@ -296,19 +324,22 @@ class HumanoidSim(MuJoCoBase):
         bodyImu.orientation.w = ori[0]
         self.pubImu.publish(bodyImu)
         
-      # get framebuffer viewport
-      
-      viewport_width, viewport_height = glfw.get_framebuffer_size(
-          self.window)
-      viewport = mj.MjrRect(0, 0, viewport_width, viewport_height)
-      
-      # Update scene and render
-      mj.mjv_updateScene(self.model, self.data, self.opt, None, self.cam,
-                          mj.mjtCatBit.mjCAT_ALL.value, self.scene)
-      mj.mjr_render(viewport, self.scene, self.context)
-      
-      # swap OpenGL buffers (blocking call due to v-sync)
-      glfw.swap_buffers(self.window)
+      # render:=false 时跳过渲染与 swap_buffers：渲染 + vsync 交换缓冲每帧
+      # 阻塞 ~16.7ms，而每帧只推进 1/60s 仿真时间，物理被钉死在 ~0.5× 墙钟；
+      # 控制器按墙钟运行，对着慢放的植物整定平衡回路必然失稳（实测 0.56×
+      # 时解暂停 1.5s 内发散、力矩打满 320Nm）。跳过后物理回到 1× 墙钟。
+      if self.render_enabled:
+        viewport_width, viewport_height = glfw.get_framebuffer_size(
+            self.window)
+        viewport = mj.MjrRect(0, 0, viewport_width, viewport_height)
+
+        # Update scene and render
+        mj.mjv_updateScene(self.model, self.data, self.opt, None, self.cam,
+                            mj.mjtCatBit.mjCAT_ALL.value, self.scene)
+        mj.mjr_render(viewport, self.scene, self.context)
+
+        # swap OpenGL buffers (blocking call due to v-sync)
+        glfw.swap_buffers(self.window)
 
       # process pending GUI events, call GLFW callbacks
       glfw.poll_events()

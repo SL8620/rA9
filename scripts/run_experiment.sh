@@ -1,0 +1,113 @@
+#!/bin/bash
+# 一键自动化实验：启动闭环 → 使能输出 → 解除暂停 → 发步态/速度 → 录 rosbag → 收尾
+# 用法: run_experiment.sh <实验名> [步态] [cmd_vx] [时长s] [录包秒数]
+#   例: run_experiment.sh trot_vx03 trot 0.3 20 15
+# 产物: experiments/<实验名>/{bag/, launch.log, params.txt}
+set -u
+NAME="${1:?用法: run_experiment.sh <实验名> [步态=trot] [cmd_vx=0.3] [时长s=20] [录包秒数=15]}"
+GAIT="${2:-trot}"
+CMD_VX="${3:-0.3}"
+DURATION="${4:-20}"
+REC_SECS="${5:-15}"
+
+RA9_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+OUT="$RA9_DIR/experiments/$NAME"
+mkdir -p "$OUT"
+
+# ROS setup 脚本引用未绑定变量，与 set -u 不兼容，source 期间放开
+set +u
+source /opt/ros/jazzy/setup.bash
+source "$RA9_DIR/install/setup.bash"
+set -u
+
+# 1) 启动闭环（仿真默认暂停、hwswitch 默认关 —— 都由本脚本控制）
+ros2 launch humanoid_controllers load_cheat_controller.launch.py teleop:=false rviz:=false render:=false > "$OUT/launch.log" 2>&1 &
+LAUNCH_PID=$!
+trap 'kill $LAUNCH_PID 2>/dev/null; sleep 2; pkill -f "cheat_controller_node" 2>/dev/null; pkill -f "humanoid_mujoco_sim/humanoid_sim" 2>/dev/null; pkill -f "humanoid_target_trajectories_publisher" 2>/dev/null; pkill -f "humanoid_gait_command" 2>/dev/null; pkill -f "humanoid_mujoco_sim/teleop" 2>/dev/null; pkill -f rviz2 2>/dev/null' EXIT
+
+# 2) 等控制器就绪（MPC 观测流出现 = 初始策略已收到）
+echo "[run] waiting for controller..."
+for i in $(seq 1 60); do
+  if timeout 3 ros2 topic echo /humanoid_mpc_observation --once >/dev/null 2>&1; then
+    echo "[run] controller ready (${i}s)"; break
+  fi
+  [ "$i" = 60 ] && { echo "[run] ERROR: controller never came up"; exit 1; }
+  sleep 1
+done
+
+# 2.4) 录包从使能/解暂停之前就开始 —— 早期版本在动作后 3s 才录，
+#    反复错过跌倒关键窗口（解暂停后 1.5-3s 内发散），无法归因。
+ros2 bag record -o "$OUT/bag" \
+  /humanoid_mpc_observation /humanoid_mpc_mode_schedule /humanoid_gait_mode_schedule \
+  /humanoid/optimizedStateTrajectory /humanoid/desiredBaseTrajectory \
+  /humanoid/desiredFeetTrajectory/LTOE /humanoid/desiredFeetTrajectory/RTOE \
+  /humanoid/desiredFeetTrajectory/LHEEL /humanoid/desiredFeetTrajectory/RHEEL \
+  /ground_truth/state /jointsPosVel /imu /pauseFlag /simContactFlag /cmd_contactFlag \
+  /targetTorque /targetPos /targetVel /targetKp /targetKd /realTorque /foot_vel_estimate \
+  /mpc_solve_time_ms /wbc_solve_time_ms /cmd_vel \
+  > "$OUT/bag_record.log" 2>&1 &
+BAG_PID=$!
+
+# 2.5) 杀掉本栈的 teleop（实验用 /cmd_vel 直发，teleop 的 150Hz 广播必须消失）
+pkill -9 -f "humanoid_mujoco_sim/teleop" 2>/dev/null
+sleep 0.5
+
+# 3) 使能输出（否则力矩/目标指令被 hwSwitch 门控不发）。
+#    注意 DDS 发现竞态：--once 单发可能赶在订阅端发现前丢失，
+#    关键命令一律重复发布数秒（run_experiment 早期版本 3 连发全部丢失）。
+ros2 topic pub -r 2 /hwswitch std_msgs/msg/Bool "data: true" >/dev/null 2>&1 &
+HWSW_PID=$!
+sleep 2
+
+# 4) 解除仿真暂停（替代手动按 SPACE），重复发 2s 破发现竞态
+timeout 3 ros2 topic pub -r 5 /pauseCmd std_msgs/msg/Bool "data: false" >/dev/null 2>&1
+echo "[run] sim unpaused"
+
+# 5) 发步态（ModeSchedule 与 gait 字符串双通道，复刻键盘节点行为；
+#    模板值取自 humanoid_interface/config/command/gait_.info，模式编码 LCONTACT=1 RCONTACT=2 STANCE=3）
+case "$GAIT" in
+  stance)      SEQ="[3]";                TIMES="[0.0, 1000.0]" ;;
+  trot)        SEQ="[1, 2]";             TIMES="[0.0, 0.45, 0.9]" ;;
+  walk)        SEQ="[1, 3, 2, 3]";       TIMES="[0.0, 0.45, 0.6, 1.05, 1.2]" ;;
+  quick_trot)  SEQ="[1, 2]";             TIMES="[0.0, 0.3, 0.6]" ;;
+  *) echo "[run] ERROR: 未知步态 '$GAIT'（可选 stance/trot/walk/quick_trot）"; exit 1 ;;
+esac
+timeout 3 ros2 topic pub -r 2 /humanoid_gait_mode_schedule std_msgs/msg/String "{data: '$GAIT'}" >/dev/null 2>&1
+timeout 3 ros2 topic pub -r 2 /humanoid_mpc_mode_schedule ocs2_msgs/msg/ModeSchedule "{event_times: $TIMES, mode_sequence: $SEQ}" >/dev/null 2>&1
+echo "[run] gait=$GAIT"
+
+# 6) 发速度指令（teleop 同款 /cmd_vel；值为 reference_.info 缩放前的归一化指令）
+ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: $CMD_VX, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}" >/dev/null 2>&1 &
+CMDVEL_PID=$!
+echo "[run] cmd_vx=$CMD_VX for ${DURATION}s"
+
+# 7) 保持实验窗口（录包已在 2.4 启动）
+sleep "$REC_SECS"
+# 收尾必须等录包进程写完 metadata.yaml 否则 bag 读不了。
+# 注意：非交互 shell 的后台任务 SIGINT 被忽略（POSIX），必须用 SIGTERM。
+kill -TERM $BAG_PID 2>/dev/null
+for i in $(seq 1 20); do
+  kill -0 $BAG_PID 2>/dev/null || break
+  sleep 1
+done
+kill -9 $BAG_PID 2>/dev/null
+kill $CMDVEL_PID 2>/dev/null
+
+# 8) 收尾：停输出、恢复暂停（先杀持续使能的发布者再关）
+kill $HWSW_PID 2>/dev/null
+timeout 2 ros2 topic pub -r 2 /hwswitch std_msgs/msg/Bool "data: false" >/dev/null 2>&1
+timeout 2 ros2 topic pub -r 2 /pauseCmd std_msgs/msg/Bool "data: true" >/dev/null 2>&1
+
+# 9) 记录实验参数（可溯源）
+cat > "$OUT/params.txt" <<EOF
+name=$NAME
+gait=$GAIT
+cmd_vx=$CMD_VX
+duration_s=$DURATION
+record_s=$REC_SECS
+date=$(date -Iseconds)
+git_commit=$(git -C "$RA9_DIR" rev-parse HEAD)
+git_dirty=$(git -C "$RA9_DIR" status --porcelain | wc -l)
+EOF
+echo "[run] done -> $OUT"
+grep -A4 "Benchmarking" "$OUT/launch.log" | tail -8

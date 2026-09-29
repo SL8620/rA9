@@ -100,6 +100,8 @@ bool humanoidController::init(rclcpp::Node::SharedPtr &controller_nh) {
   cmd_contactFlagPub_ = controllerNh_->create_publisher<std_msgs::msg::Int8MultiArray>("/cmd_contactFlag", 2);
   vs_basePub_ = controllerNh_->create_publisher<std_msgs::msg::Float32MultiArray>("/vs_base", 2);
   vs_xianyanPub_ = controllerNh_->create_publisher<std_msgs::msg::Float32MultiArray>("/vs_xianyan", 2);
+  mpcSolveTimePub_ = controllerNh_->create_publisher<std_msgs::msg::Float64>("/mpc_solve_time_ms", 2);
+  wbcSolveTimePub_ = controllerNh_->create_publisher<std_msgs::msg::Float64>("/wbc_solve_time_ms", 2);
   // State estimation
   setupStateEstimate(taskFile, verbose);
 
@@ -218,6 +220,11 @@ void humanoidController::update(const rclcpp::Time& time, const rclcpp::Duration
   wbcTimer_.startTimer();
   vector_t x = wbc_->update(optimizedState, optimizedInput, measuredRbdState_, plannedMode_, period.seconds());
   wbcTimer_.endTimer();
+  {
+    std_msgs::msg::Float64 solveTimeMsg;
+    solveTimeMsg.data = wbcTimer_.getLastIntervalInMilliseconds();
+    wbcSolveTimePub_->publish(solveTimeMsg);
+  }
 
   const vector_t& torque = x.tail(jointNum_);
   const vector_t& wbc_planned_joint_acc = x.segment(6, jointNum_);
@@ -420,6 +427,11 @@ void humanoidController::setupMrt() {
                 mpcTimer_.startTimer();
                 mpcMrtInterface_->advanceMpc();
                 mpcTimer_.endTimer();
+                {
+                  std_msgs::msg::Float64 solveTimeMsg;
+                  solveTimeMsg.data = mpcTimer_.getLastIntervalInMilliseconds();
+                  mpcSolveTimePub_->publish(solveTimeMsg);
+                }
               }
             },
             HumanoidInterface_->mpcSettings().mpcDesiredFrequency_);

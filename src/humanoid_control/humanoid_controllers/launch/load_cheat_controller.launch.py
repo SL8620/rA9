@@ -21,6 +21,18 @@ def generate_launch_description():
             name='multiplot',
             default_value='false'
         ),
+        # teleop 会以 150Hz 持续发布 /hwswitch=false 与零 /cmd_vel（使能只靠
+        # 'p' 键翻转），实验脚本直发话题时会被淹没 —— 批量实验传 teleop:=false
+        launch.actions.DeclareLaunchArgument(
+            name='teleop',
+            default_value='true'
+        ),
+        # render:=false 跳过 MuJoCo 渲染/vsync —— 渲染节拍把物理拖到
+        # ~0.5× 墙钟，控制器（墙钟节拍）对着慢放植物会失稳。批量实验必关。
+        launch.actions.DeclareLaunchArgument(
+            name='render',
+            default_value='true'
+        ),
         launch.actions.DeclareLaunchArgument(
             name='taskFile',
             default_value=get_package_share_directory(
@@ -135,6 +147,9 @@ def generate_launch_description():
                 },
                 {
                     'urdfFile': launch.substitutions.LaunchConfiguration('urdfFile')
+                },
+                {
+                    'render': launch.substitutions.LaunchConfiguration('render')
                 }
 
             ]
@@ -145,7 +160,8 @@ def generate_launch_description():
             name='teleop',
             output='screen',
             prefix="gnome-terminal --",
- 
+            condition=launch.conditions.IfCondition(
+                launch.substitutions.LaunchConfiguration('teleop'))
         )
     ])
     return ld

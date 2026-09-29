@@ -24,6 +24,7 @@
 #include "std_msgs/msg/int8_multi_array.hpp"
 #include "std_msgs/msg/float32_multi_array.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/float64.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 
 
@@ -88,6 +89,9 @@ class humanoidController{
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr vs_basePub_;//估计的足端速度
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr foot_vel_estimatePub_;//估计的足端速度
   rclcpp::Publisher<std_msgs::msg::Int8MultiArray>::SharedPtr cmd_contactFlagPub_;//命令的接触状态
+  // 求解耗时埋点：逐次发布单次求解耗时 [ms]，供实验 rosbag 记录实时性分布
+  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr mpcSolveTimePub_;
+  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr wbcSolveTimePub_;
   
   
   rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr jointPosVelSub_;
