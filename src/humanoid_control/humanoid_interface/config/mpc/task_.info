@@ -115,12 +115,12 @@ initialState
    ;; Base Pose: [position, orientation] ;;
    (6,0)  0.0     ; p_base_x
    (7,0)  0.0     ; p_base_y
-  (8,0)  0.952   ; p_base_z
+  (8,0)  0.976   ; p_base_z
    (9,0)  0.0     ; theta_base_z
    (10,0) 0.0     ; theta_base_y
    (11,0) 0.0     ; theta_base_x
 
-   ;; Leg Joint Positions: [LF, LH, RF, RH] ;;
+   ;; Leg Joint Positions: [left leg(6), right leg(6)] ;;
   (12,0) 0   ; leg_l1_joint
   (13,0) 0   ; leg_l2_joint
   (14,0) -0.37   ; leg_l3_joint
@@ -156,7 +156,7 @@ Q
   (10,10) 5000.0    ; theta_base_y
   (11,11) 5000.0    ; theta_base_x
 
-  ;; Leg Joint Positions: [LF, LH, RF, RH] ;;
+  ;; Leg Joint Positions: [left leg(6), right leg(6)] ;;
   (12,12) 300.0     ; leg_l1_joint
   (13,13) 200.0     ; leg_l2_joint
   (14,14) 60.0     ; leg_l3_joint
@@ -176,7 +176,7 @@ R
 {
   scaling 1e-3
 
-  ;; Feet Contact Forces: [LF, RF, LH, RH] ;;
+  ;; Feet Contact Forces: [left toe, right toe, left heel, right heel] ;;
   (0,0)   2.0       ; x
   (1,1)   1.5       ; y
   (2,2)   5.0       ; z
@@ -190,7 +190,7 @@ R
   (10,10) 1.5       ; y
   (11,11) 5.0       ; z
 
-  ;; foot velocity relative to base: [LF, LH, RF, RH] (uses the Jacobian at nominal configuration) ;;
+  ;; foot velocity relative to base: [left toe, right toe, left heel, right heel] (uses the Jacobian at nominal configuration) ;;
   (12,12) 4000.0    ; x
   (13,13) 4000.0    ; y
   (14,14) 2000.0    ; z
@@ -312,3 +312,43 @@ joint_pos_bias
 }
 
 
+
+; MIT PD 增益（humanoidController 从这里加载，索引与关节顺序一致：左腿6+右腿6）
+KpGains
+{
+  (0,0) 100.0
+  (1,0) 100.0
+  (2,0) 120.0
+  (3,0) 120.0
+  (4,0) 5.0
+  (5,0) 2.8
+  (6,0) 100.0
+  (7,0) 100.0
+  (8,0) 120.0
+  (9,0) 120.0
+  (10,0) 5.0
+  (11,0) 2.8
+}
+
+KdGains
+{
+  (0,0) 0.7
+  (1,0) 0.7
+  (2,0) 0.6
+  (3,0) 0.6
+  (4,0) 0.15
+  (5,0) 0.05
+  (6,0) 0.7
+  (7,0) 0.7
+  (8,0) 0.6
+  (9,0) 0.6
+  (10,0) 0.15
+  (11,0) 0.05
+}
+
+stateEstimate
+{
+  ; 是否使用实测接触状态（仿真中由 /simContactFlag 提供）；
+  ; false 时退回旧方案：用规划步态 plannedMode_ 推接触标志（对打滑/提前落地不敏感）
+  useMeasuredContact  false
+}

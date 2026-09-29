@@ -98,13 +98,16 @@ class MuJoCoBase():
         else:
             action = mj.mjtMouse.mjMOUSE_ZOOM
 
+        # mujoco >= 3.2 dropped the scene argument: mjv_moveCamera(m, action,
+        # reldx, reldy, cam). The old 5-arg call raised TypeError inside the
+        # GLFW callback and killed the sim loop (2026-09-29).
         mj.mjv_moveCamera(self.model, action, dx/height,
-                          dy/height, self.scene, self.cam)
+                          dy/height, self.cam)
 
     def scroll(self, window, xoffset, yoffset):
         action = mj.mjtMouse.mjMOUSE_ZOOM
         mj.mjv_moveCamera(self.model, action, 0.0, -0.05 *
-                          yoffset, self.scene, self.cam)
+                          yoffset, self.cam)
 
     def simulate(self):
         while not glfw.window_should_close(self.window):

@@ -20,10 +20,16 @@ class SafetyChecker {
  protected:
   bool checkOrientation(const SystemObservation& observation) {
     vector_t pose = getBasePose(observation.state, info_);
-    if (pose(5) > M_PI_2 || pose(5) < -M_PI_2) {
-      std::cerr << "[SafetyChecker] Orientation safety check failed!" << std::endl;
-      //output pose
-//        std::cerr << "pose: " << pose << std::endl;
+    // 基座位姿顺序为 [x, y, z, yaw, pitch, roll]，人形最常见失稳模式是前倾/后仰（pitch），
+    // 因此 pitch 必须检查；阈值取 ±45°，roll 保持 ±90°。
+    constexpr scalar_t pitchLimit = M_PI_4;
+    constexpr scalar_t rollLimit = M_PI_2;
+    if (pose(4) > pitchLimit || pose(4) < -pitchLimit) {
+      std::cerr << "[SafetyChecker] Pitch safety check failed! pitch = " << pose(4) << std::endl;
+      return false;
+    }
+    if (pose(5) > rollLimit || pose(5) < -rollLimit) {
+      std::cerr << "[SafetyChecker] Roll safety check failed! roll = " << pose(5) << std::endl;
       return false;
     }
     return true;

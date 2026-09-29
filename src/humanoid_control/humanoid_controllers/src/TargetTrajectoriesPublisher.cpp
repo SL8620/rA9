@@ -71,8 +71,10 @@ TargetTrajectories goalToTargetTrajectories(const vector_t& goal, const SystemOb
 
 
 
+namespace {  // 文件内部状态，避免污染全局符号表
 std::string gait_mode_ = "stance";//表示当前的默认指令步态
-//std::string gait_mode_last = "stance";//表示当前的默认指令步态
+scalar_t last_cmd_time_ = -1.0;//上一次位置增量积分时刻，用于计算 dt
+} // namespace
 TargetTrajectories cmdVelToTargetTrajectories(const vector_t& cmdVel, const SystemObservation& observation) {
     const vector_t currentPose = observation.state.segment<6>(6);
   const Eigen::Matrix<scalar_t, 3, 1> zyx = currentPose.tail(3);
@@ -95,13 +97,17 @@ TargetTrajectories cmdVelToTargetTrajectories(const vector_t& cmdVel, const Syst
 
   static auto targetPose_= currentPose;
 
-
-
+  // 按实际时间步进积分（原实现写死 1/100 假设回调恰好 100Hz，回调频率变化会导致速度标定错误）
+  scalar_t dt = 0.0;
+  if (last_cmd_time_ >= 0.0) {
+    dt = std::min(std::max(observation.time - last_cmd_time_, 0.0), 0.1);
+  }
+  last_cmd_time_ = observation.time;
 
   if(gait_mode_ != "stance"){//根据当前的步态来决定绝对还是相对
-    targetPose_(0) += cmdVelRot(0) * 1.0 / 100.0;
-    targetPose_(1) += cmdVelRot(1) * 1.0 / 100.0;//绝对的位置控制 
-    targetPose_(3) += cmdVel(3) * 1.0 / 100.0;//yaw轴绝对的角度控制
+    targetPose_(0) += cmdVelRot(0) * dt;
+    targetPose_(1) += cmdVelRot(1) * dt;//绝对的位置控制
+    targetPose_(3) += cmdVel(3) * dt;//yaw轴绝对的角度控制
 
     targetPose(0) = targetPose_(0);
     targetPose(1) = targetPose_(1);

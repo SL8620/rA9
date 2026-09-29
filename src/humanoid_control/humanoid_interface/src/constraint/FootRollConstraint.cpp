@@ -20,6 +20,8 @@ namespace humanoid {
                 info_(rhs.info_) {}
 
     bool FootRollConstraint::isActive(scalar_t time) const {
+        // 注意：当前为恒激活（支撑期与摆动期都将踝 roll 关节速度约束为 0），这是当前"能走"版本的调参结果。
+        // 另一种设计是仅在摆动期激活（支撑期放开踝 roll），如需改动请重新做行走验证。
 //        return !referenceManagerPtr_->getContactFlags(time)[contactPointIndex_];
         return true;
     }

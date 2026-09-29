@@ -57,16 +57,25 @@ vector_t WeightedWbc::update(const vector_t& stateDesired, const vector_t& input
 
   qpProblem.init(H.data(), g.data(), A.data(), nullptr, nullptr, lbA.data(), ubA.data(), nWsr);
   vector_t qpSol(getNumDecisionVars());
+  qpSol.setZero();
 
-  qpProblem.getPrimalSolution(qpSol.data());
+  // 必须先判断求解是否成功，再读取解；失败时 qpSol 内容未定义，不能直接下发
+  // 注意 qpOASES::SUCCESSFUL_RETURN == 0，不能把 getPrimalSolution 的返回值直接当 bool 用
+  bool solved = qpProblem.isSolved() && (qpProblem.getPrimalSolution(qpSol.data()) == qpOASES::SUCCESSFUL_RETURN);
 
-  if (!qpProblem.isSolved())
+  if (!solved || !qpSol.allFinite())
   {
     #ifdef DEBUG
     std::cout << "ERROR: WeightWBC Not Solved!!!" << std::endl;
     #endif
     if (last_qpSol.size() > 0)
-      qpSol = last_qpSol;
+    {
+      qpSol = last_qpSol;  // 退化到上一次的有效解
+    }
+    else
+    {
+      qpSol.setZero();  // 首次求解即失败：返回零力矩（安全兜底），由控制器侧检测并报警
+    }
   }
 
   last_qpSol = qpSol;

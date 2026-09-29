@@ -66,6 +66,7 @@ KalmanFilterEstimate::KalmanFilterEstimate(PinocchioInterface pinocchioInterface
   eeKinematics_->setPinocchioInterface(pinocchioInterface_);
 
   world2odom_.setRotation(tf2::Quaternion::getIdentity());
+  // 真机视觉里程计接口（上游遗留）：仿真中无此话题，updateFromTopic 不会被触发，保留以便实机复用
   sub_ = node->create_subscription<nav_msgs::msg::Odometry>("/tracking_camera/odom/sample", 10,
                                                             std::bind(&KalmanFilterEstimate::callback, this, std::placeholders::_1));
 }

@@ -19,6 +19,7 @@ set(dependencies
         ocs2_msgs
         angles
         hpp-fcl
+        pluginlib
 )
 
 find_package(ament_cmake REQUIRED)
@@ -34,6 +35,7 @@ find_package(ocs2_self_collision REQUIRED)
 find_package(ocs2_self_collision_visualization REQUIRED)
 find_package(angles REQUIRED)
 find_package(hpp-fcl REQUIRED)
+find_package(pluginlib REQUIRED)
 
 ###########
 ## Build ##
@@ -156,7 +158,9 @@ install(
         DESTINATION lib/${PROJECT_NAME}
 )
 
-install(DIRECTORY launch config
+# config/ does not exist in this package (runtime configs live in
+# humanoid_interface/config); listing it made the install step fail.
+install(DIRECTORY launch
         DESTINATION share/${PROJECT_NAME}/
 )
 

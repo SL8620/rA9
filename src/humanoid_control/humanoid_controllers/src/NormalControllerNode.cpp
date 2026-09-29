@@ -3,6 +3,7 @@
 //
 
 #include "humanoid_controllers/humanoidController.h"
+#include <algorithm>
 #include <thread>
 #include "rclcpp/rclcpp.hpp"
 
@@ -10,6 +11,11 @@ using Duration = std::chrono::duration<double>;
 using Clock = std::chrono::high_resolution_clock;
 
 bool pause_flag = false;
+// 控制周期超限告警阈值与 dt 上限：单次循环超过 3 倍周期时告警；
+// dt 钳位防止一次长卡顿（如断点调试）以巨大 dt 灌入状态估计器
+constexpr double kDesiredPeriod = 1.0 / 500;
+constexpr double kOverrunWarnFactor = 3.0;
+constexpr double kMaxDt = 0.005;
 
 void pauseCallback(const std_msgs::msg::Bool::SharedPtr msg){
     pause_flag = msg->data;
@@ -53,20 +59,20 @@ int main(int argc, char** argv){
         {
             const auto currentTime = Clock::now();
             // Compute desired duration rounded to clock decimation
-            const Duration desiredDuration(1.0 / 500);
+            const Duration desiredDuration(kDesiredPeriod);
 
             // Get change in time
             Duration time_span = std::chrono::duration_cast<Duration>(currentTime - lastTime);
-            elapsedTime_ = rclcpp::Duration::from_seconds(time_span.count());
             lastTime = currentTime;
 
             // Check cycle time for excess delay
-//            const double cycle_time_error = (elapsedTime_ - ros::Duration(desiredDuration.count())).toSec();
-//            if (cycle_time_error > cycleTimeErrorThreshold_) {
-//                ROS_WARN_STREAM("Cycle time exceeded error threshold by: " << cycle_time_error - cycleTimeErrorThreshold_ << "s, "
-//                                                                           << "cycle time: " << elapsedTime_ << "s, "
-//                                                                           << "threshold: " << cycleTimeErrorThreshold_ << "s");
-//            }
+            if (time_span.count() > kDesiredPeriod * kOverrunWarnFactor) {
+                RCLCPP_WARN(node->get_logger(),
+                            "Control cycle overrun: cycle time %.1f ms (expected %.1f ms)",
+                            time_span.count() * 1e3, kDesiredPeriod * 1e3);
+            }
+            // dt 钳位：防止一次长卡顿（如断点调试）以巨大 dt 灌入状态估计器
+            elapsedTime_ = rclcpp::Duration::from_seconds(std::min(time_span.count(), kMaxDt));
 
             // Control
             // let the controller compute the new command (via the controller manager)

@@ -34,7 +34,6 @@ def callback(data):
 rclpy.init()
 node = Node('joy11')        
 
-cmd_pub = node.create_publisher(Twist,'/cmd_vel',1)
 node.create_subscription(Joy,'joy',callback,10)
 
 publisher = node.create_publisher(Twist, '/cmd_vel',1)

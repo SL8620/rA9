@@ -53,11 +53,12 @@ struct ModelSettings {
                                       "Hip_R_Pitch_Joint", "Knee_R_Pitch_Joint", "Ankle_R_Pitch_Joint", "Ankle_R_Roll_Joint"};
   std::vector<std::string> contactNames6DoF{};
   // Use ankle roll links as contact frames for toe/heel on each foot
-  // Order: LF, LH, RF, RH -> here LF/LH share left ankle frame, RF/RH share right ankle frame
+  // 注意顺序（与 modeNumber2StanceLeg、gait 定义一致，改动必须同步）：
+  // [0] left toe, [1] right toe, [2] left heel, [3] right heel
   std::vector<std::string> contactNames3DoF{"l_foot_toe", "r_foot_toe", "l_foot_heel", "r_foot_heel"};
 };
 
-ModelSettings loadModelSettings(const std::string& filename, const std::string& fieldName = "model_settings", bool verbose = "true");
+ModelSettings loadModelSettings(const std::string& filename, const std::string& fieldName = "model_settings", bool verbose = true);
 
 }  // namespace humanoid
 }  // namespace ocs2

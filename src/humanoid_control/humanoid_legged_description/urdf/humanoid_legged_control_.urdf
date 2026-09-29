@@ -88,7 +88,9 @@
   <joint name="dummy_to_base_link" type="fixed">
     <parent link="dummy_link"/>
     <child link="base_link"/>
-    <origin rpy="0 0 0" xyz="-0.3605 0 0.129"/>
+    <!-- origin 是 base_link 在 dummy_link 坐标系下的位姿；dummy_link 对齐 MJCF 中的 IMU site（其在 base 系下为 (-0.3605, 0, -0.133)），
+         因此这里应为 (+0.3605, 0, +0.133)。z 取 0.129 为原调试值 -->
+    <origin rpy="0 0 0" xyz="0.3605 0 0.129"/>
   </joint>
   <link name="Hip_L_Roll_Link">
     <inertial>

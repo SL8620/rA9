@@ -99,10 +99,11 @@ public:
   }
 
 
-  Eigen::Matrix<scalar_t, 12, 1> vf_;//表示的是足端接触点的线速度
-  Eigen::Matrix<scalar_t, 3, 1> vs_xianyan;//表示的先验估计的imu的速度
-  Eigen::Matrix<scalar_t, 12, 1> vs_base;//表示的是足端接触点反求出的躯干速度
-  Eigen::Matrix<scalar_t, 3, 1> vs_filtered;//表示的是经过低通滤波后的imu（躯干）速度
+  Eigen::Matrix<scalar_t, 12, 1> vf_ = Eigen::Matrix<scalar_t, 12, 1>::Zero();//表示的是足端接触点的线速度
+  Eigen::Matrix<scalar_t, 3, 1> vs_xianyan = Eigen::Matrix<scalar_t, 3, 1>::Zero();//表示的先验估计的imu的速度
+  //注意：该变量存放的是 -eeVel（足端相对躯干速度的反号），并非躯干速度本身，命名遗留自上游，勿直接当躯干速度使用
+  Eigen::Matrix<scalar_t, 12, 1> vs_base = Eigen::Matrix<scalar_t, 12, 1>::Zero();//表示的是足端接触点反求出的躯干速度
+  Eigen::Matrix<scalar_t, 3, 1> vs_filtered = Eigen::Matrix<scalar_t, 3, 1>::Zero();//表示的是经过低通滤波后的imu（躯干）速度
 
 protected:
   void earlyContactDetection(const ModeSchedule& modeSchedule, scalar_t current_time);
@@ -119,8 +120,8 @@ protected:
   vector_t rbdState_;
   contact_flag_t contactFlag_{};
   contact_flag_t contactFlag_reliable{};//表示的是实际用于状态估计的接触状态(可靠接触状态)，该状态的目的是为了消除接触瞬间冲击的影响
-  uint64_t contact_tick[4];//计数表示接触的时间，若为腾空状态，则清零，若，contactFlag_=1,则该变量不断的+1，目前的代码为计数50(100ms)
-                           //则contactFlag_use_to_compute{}置1，
+  uint64_t contact_tick[4] = {0};//计数表示接触的时间，若为腾空状态，则清零，若contactFlag_=1则该变量不断+1，
+                                  //连续计数达到75（500Hz下为150ms）则contactFlag_reliable置1
 
   Eigen::Quaternion<scalar_t> quat_;
   vector3_t angularVelLocal_, linearAccelLocal_;

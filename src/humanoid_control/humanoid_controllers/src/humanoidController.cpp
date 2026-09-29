@@ -42,6 +42,28 @@ bool humanoidController::init(rclcpp::Node::SharedPtr &controller_nh) {
   joint_pos_bias_ = vector_t(12);
   loadData::loadEigenMatrix(taskFile, "joint_pos_bias", joint_pos_bias_);
 
+  // PD 增益从配置加载（默认值与原硬编码一致）
+  kpGains_ = (vector_t(12) << 100.0, 100.0, 120.0, 120.0, 5.0, 2.8, 100.0, 100.0, 120.0, 120.0, 5.0, 2.8).finished();
+  kdGains_ = (vector_t(12) << 0.7, 0.7, 0.6, 0.6, 0.15, 0.05, 0.7, 0.7, 0.6, 0.6, 0.15, 0.05).finished();
+  loadData::loadEigenMatrix(taskFile, "KpGains", kpGains_);
+  loadData::loadEigenMatrix(taskFile, "KdGains", kdGains_);
+
+  // 实测接触开关：默认 false（用规划步态推断接触）。打开后从 /simContactFlag 取实测接触标志，
+  // 可降低对打滑/提前落地的敏感度；需仿真端同步发布该话题。
+  // 缺省容忍：字段缺失或解析失败时保持 false，不中断启动。
+  try {
+    loadData::loadCppDataType(taskFile, "stateEstimate.useMeasuredContact", useMeasuredContact_);
+  } catch (const std::exception& e) {
+    useMeasuredContact_ = false;
+    RCLCPP_WARN(controllerNh_->get_logger(), "[humanoid Controller] 未读到 stateEstimate.useMeasuredContact（%s），默认用规划步态推断接触。", e.what());
+  }
+  if (useMeasuredContact_) {
+    simContactFlagPubSub_ = controllerNh_->create_subscription<std_msgs::msg::Int8MultiArray>(
+        "/simContactFlag", 2,
+        std::bind(&humanoidController::simContactFlagCallback, this, std::placeholders::_1));
+    RCLCPP_INFO(controllerNh_->get_logger(), "[humanoid Controller] 使用实测接触状态 (/simContactFlag)。");
+  }
+
   setupHumanoidInterface(taskFile, urdfFile, referenceFile, verbose);
   setupMpc();
   setupMrt();
@@ -93,9 +115,6 @@ bool humanoidController::init(rclcpp::Node::SharedPtr &controller_nh) {
 }
 
 void humanoidController::jointStateCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg) {
-  static float vel_l1 = 0,vel_l2 = 0,vel_l3 = 0, vel_l4 = 0, vel_l5 = 0, vel_l6 = 0,
-               vel_r1 = 0,vel_r2 = 0,vel_r3 = 0, vel_r4 = 0, vel_r5 = 0, vel_r6 = 0;
-  const float kf_ankle_pitch = 0.3, kf_ankle_roll = 0.3, kf_waist_1 = 0.3,kf_waist_2 = 0.3,kf_waist_3 = 0.3, kf_knee = 0.3;
 
   if (msg->data.size() != 2 * jointNum_) {
     RCLCPP_ERROR( controllerNh_->get_logger() ,"Received joint state message with wrong size: %ld" , msg->data.size());
@@ -106,36 +125,11 @@ void humanoidController::jointStateCallback(const std_msgs::msg::Float32MultiArr
       jointVel_(i) = msg->data[i + jointNum_];
   }
 
-  //单独给踝关节速度滤波
-  vel_l1 = kf_waist_1 * vel_l1 + (1 - kf_waist_1) * msg->data[0 + jointNum_];
-  vel_l2 = kf_waist_2 * vel_l2 + (1 - kf_waist_2) * msg->data[1 + jointNum_];
-  vel_l3 = kf_waist_3 * vel_l3 + (1 - kf_waist_3) * msg->data[2 + jointNum_];
-  
-  vel_l4 = kf_knee * vel_l4 + (1 - kf_knee) * msg->data[3 + jointNum_];
-  vel_l5 = kf_ankle_pitch * vel_l5 + (1 - kf_ankle_pitch) * msg->data[4 + jointNum_];
-  vel_l6 = kf_ankle_roll * vel_l6 + (1 - kf_ankle_roll) * msg->data[5 + jointNum_];
-
-  vel_r1 = kf_waist_1 * vel_r1 + (1 - kf_waist_1) * msg->data[6 + jointNum_];
-  vel_r2 = kf_waist_2 * vel_r2 + (1 - kf_waist_2) * msg->data[7 + jointNum_];
-  vel_r3 = kf_waist_3 * vel_r3 + (1 - kf_waist_3) * msg->data[8 + jointNum_];
-
-  vel_r4 = kf_knee * vel_r4 + (1 - kf_knee) * msg->data[9 + jointNum_];
-  vel_r5 = kf_ankle_pitch * vel_r5 + (1 - kf_ankle_pitch) * msg->data[10 + jointNum_];
-  vel_r6 = kf_ankle_roll * vel_r6 + (1 - kf_ankle_roll) * msg->data[11 + jointNum_];
-
-  jointVel_(0) = vel_l1;
-  jointVel_(1) = vel_l2;
-  jointVel_(2) = vel_l3;
-  jointVel_(3) = vel_l4;
-  jointVel_(4) = vel_l5;
-  jointVel_(5) = vel_l6;
-
-  jointVel_(6) = vel_r1;
-  jointVel_(7) = vel_r2;
-  jointVel_(8) = vel_r3;
-  jointVel_(9) = vel_r4;
-  jointVel_(10) = vel_r5;
-  jointVel_(11) = vel_r6;
+  // 12 个关节速度统一做一阶低通滤波（滤波状态保存在成员 velFilter_ 中）
+  for (size_t i = 0; i < jointNum_; ++i) {
+    velFilter_[i] = kfJointVel_ * velFilter_[i] + (1 - kfJointVel_) * msg->data[i + jointNum_];
+    jointVel_(i) = velFilter_[i];
+  }
 
   jointPos_ += joint_pos_bias_;
 }
@@ -164,10 +158,24 @@ void humanoidController::HwSwitchCallback(const std_msgs::msg::Bool::SharedPtr m
     hwSwitch_ = msg->data;
 }
 
+// 实测接触标志：data 为长度 4 的 0/1，顺序同 contactNames3DoF
+//（{l_foot_toe, r_foot_toe, l_foot_heel, r_foot_heel}，见 ModelSettings.h）
+void humanoidController::simContactFlagCallback(const std_msgs::msg::Int8MultiArray::SharedPtr msg) {
+  if (msg->data.size() != measuredContactFlag_.size()) {
+    RCLCPP_WARN_THROTTLE(controllerNh_->get_logger(), *controllerNh_->get_clock(), 1000,
+                         "[humanoid Controller] /simContactFlag 长度应为 %zu，收到 %zu，忽略。",
+                         measuredContactFlag_.size(), msg->data.size());
+    return;
+  }
+  for (size_t i = 0; i < measuredContactFlag_.size(); ++i) {
+    measuredContactFlag_[i] = (msg->data[i] != 0);
+  }
+  contactFlagReceived_ = true;
+}
+
 void humanoidController::starting(const rclcpp::Time& time) {
-  // Initial state
-  currentObservation_.state = vector_t::Zero(HumanoidInterface_->getCentroidalModelInfo().stateDim);
-  currentObservation_.state(8) = 0.976;
+  // Initial state：基座初始状态直接取 task.info 中的 initialState（含初始高度），不再硬编码
+  currentObservation_.state = HumanoidInterface_->getInitialState();
   currentObservation_.state.segment(6 + 6, jointNum_) = defalutJointPos_;
 
   updateStateEstimation(time, rclcpp::Duration::from_seconds(0.002));
@@ -233,6 +241,12 @@ void humanoidController::update(const rclcpp::Time& time, const rclcpp::Duration
     return;
   }
 
+  // 下发前的最后一道防线：QP/求解异常可能产生 NaN/Inf，绝不能发给硬件
+  if (!torque.allFinite() || !posDes.allFinite() || !velDes.allFinite()) {
+    RCLCPP_ERROR(controllerNh_->get_logger() , "[humanoid Controller] NaN/Inf detected in commanded torque/pos/vel, skip publishing this cycle.");
+    return;
+  }
+
     std_msgs::msg::Float32MultiArray targetTorqueMsg;
     for (int i1 = 0; i1 < 12; ++i1) {
         targetTorqueMsg.data.push_back(torque(i1));
@@ -256,9 +270,11 @@ void humanoidController::update(const rclcpp::Time& time, const rclcpp::Duration
     std_msgs::msg::Float32MultiArray targetKp;
     std_msgs::msg::Float32MultiArray targetKd;
 
-    targetKp.data = {100.0, 100.0, 120.0, 120.0, 5.0, 2.8, 100.0, 100.0, 120.0, 120.0, 5.0, 2.8};
-    targetKd.data = {0.7, 0.7, 0.6, 0.6, 0.15, 0.05, 0.7, 0.7, 0.6, 0.6, 0.15, 0.05};
-    
+    for (int i1 = 0; i1 < 12; ++i1) {
+        targetKp.data.push_back(kpGains_(i1));
+        targetKd.data.push_back(kdGains_(i1));
+    }
+
 
     if (hwSwitch_){
       targetKpPub_->publish(targetKp);
@@ -320,9 +336,13 @@ void humanoidController::updateStateEstimation(const rclcpp::Time& time, const r
 
   jointPos = jointPos_;
   jointVel = jointVel_;
-  //TODO: get contactFlag from hardware interface
-  //暂时用plannedMode_代替，需要在接触传感器可靠之后修改为stateEstimate_->getMode()
-  contactFlag = modeNumber2StanceLeg(plannedMode_);
+  // 接触标志来源：默认用规划步态 plannedMode_ 推断（对打滑/提前落地不敏感）。
+  // 打开 useMeasuredContact 且已收到实测标志时，优先用实测接触。
+  if (useMeasuredContact_ && contactFlagReceived_) {
+    contactFlag = measuredContactFlag_;
+  } else {
+    contactFlag = modeNumber2StanceLeg(plannedMode_);
+  }
 
   quat = quat_;
   angularVel = angularVel_;
@@ -361,8 +381,8 @@ humanoidController::~humanoidController() {
 
 void humanoidController::setupHumanoidInterface(const std::string& taskFile, const std::string& urdfFile, const std::string& referenceFile,
                                             bool verbose) {
+  // HumanoidInterface 构造函数内部已调用 setupOptimalControlProblem，这里不能重复调用（否则整个 OCP/CppAD 构建两遍）
   HumanoidInterface_ = std::make_shared<HumanoidInterface>(taskFile, urdfFile, referenceFile);
-  HumanoidInterface_->setupOptimalControlProblem(taskFile, urdfFile, referenceFile, verbose);
 }
 
 void humanoidController::setupMpc() {

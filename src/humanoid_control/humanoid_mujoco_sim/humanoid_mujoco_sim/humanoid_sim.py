@@ -4,7 +4,7 @@ from .mujoco_base import MuJoCoBase
 from mujoco.glfw import glfw
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32MultiArray,Bool
+from std_msgs.msg import Float32MultiArray,Bool,Int8MultiArray
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
 import time
@@ -47,6 +47,11 @@ class HumanoidSim(MuJoCoBase):
     self.pubImu = self.node.create_publisher(Imu, '/imu', 2)
     self.pubRealTorque = self.node.create_publisher(Float32MultiArray, '/realTorque', 2)
     self.pubSimState = self.node.create_publisher(Bool,'/pauseFlag', 2)
+    # 实测接触标志，长度 4：[l_foot_toe, r_foot_toe, l_foot_heel, r_foot_heel]（同 ModelSettings.h 的 contactNames3DoF）
+    self.pubContactFlag = self.node.create_publisher(Int8MultiArray, '/simContactFlag', 2)
+    # 缓存上一步接触状态，供 500Hz 发布分支复用（在 1kHz step 中更新）
+    self.contactFlag = Int8MultiArray()
+    self.contactFlag.data = array.array('b', [0, 0, 0, 0])
 
     self.node.create_subscription(Float32MultiArray, "/targetTorque", self.targetTorqueCallback,2) 
     self.node.create_subscription(Float32MultiArray, "/targetPos", self.targetPosCallback,2) 
@@ -56,7 +61,9 @@ class HumanoidSim(MuJoCoBase):
     #set the initial joint position
     self.data.qpos[:3] = init_base_pos
     # init rpy to init quaternion
-    self.data.qpos[3:7] = R.from_euler('xyz', init_base_eular_zyx).as_quat()
+    # scipy 的 as_quat() 返回 (x,y,z,w)，而 MuJoCo qpos[3:7] 需要 (w,x,y,z)，必须显式转换
+    q_xyzw = R.from_euler('xyz', init_base_eular_zyx).as_quat()
+    self.data.qpos[3:7] = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]])
     self.data.qpos[-12:] = init_joint_pos
 
     self.data.qvel[:3] = np.array([0, 0, 0])
@@ -78,6 +85,32 @@ class HumanoidSim(MuJoCoBase):
     
 
     
+
+  def updateContactFlag(self):
+    # 判定两只脚的 sole geom（left_sole / right_sole）是否与地面接触。
+    # 顺序同 contactNames3DoF：[l_foot_toe, r_foot_toe, l_foot_heel, r_foot_heel]。
+    # 说明：toe 与 heel 两个 site 位于同一个 sole box geom 上，而 MuJoCo 每对 geom 只生成一个接触点，
+    # 因此无法据单个接触点区分 toe/heel（压力中心偏移会让 heel 标志误报）。
+    # 这里按"整只脚是否触地"判定，同一只脚的 toe/heel 置为相同值——这是模型能可靠观测的物理量。
+    ground_gid = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_GEOM, 'ground')
+    sole_gid = {
+      'l': mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_GEOM, 'left_sole'),
+      'r': mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_GEOM, 'right_sole'),
+    }
+
+    touched = {'l': False, 'r': False}
+    for c in range(self.data.ncon):
+      con = self.data.contact[c]
+      for side in ('l', 'r'):
+        g = sole_gid[side]
+        if (con.geom1 == g and con.geom2 == ground_gid) or (con.geom2 == g and con.geom1 == ground_gid):
+          touched[side] = True
+
+    # [l_foot_toe, r_foot_toe, l_foot_heel, r_foot_heel]
+    self.contactFlag.data[0] = 1 if touched['l'] else 0
+    self.contactFlag.data[1] = 1 if touched['r'] else 0
+    self.contactFlag.data[2] = self.contactFlag.data[0]
+    self.contactFlag.data[3] = self.contactFlag.data[1]
 
   def targetTorqueCallback(self, data):
     self.targetTorque = np.array(list(data.data))
@@ -129,7 +162,10 @@ class HumanoidSim(MuJoCoBase):
           self.data.ctrl[:] = self.targetTorque + self.targetKp * (self.targetPos - self.data.qpos[-12:]) + self.targetKd * (self.targetVel - self.data.qvel[-12:])
           # Step simulation environment
           mj.mj_step(self.model, self.data)
-          sim_epoch_start = time.time()
+          # 按固定周期累加（扣除 step 本身的耗时），落后过多（如程序断点暂停）时重新对齐墙钟
+          sim_epoch_start += 1.0 / self.sim_rate
+          if time.time() - sim_epoch_start > 0.1:
+            sim_epoch_start = time.time()
 
         
         if (self.data.time - publish_time >= 1.0 / 500.0):
@@ -147,10 +183,11 @@ class HumanoidSim(MuJoCoBase):
           pos = self.data.sensor('BodyPos').data.copy()
 
           #add imu bias
-          ori = self.data.sensor('BodyQuat').data.copy()
-          ori = R.from_quat(ori).as_euler('xyz')
+          # MuJoCo 传感器输出 (w,x,y,z)，scipy 需要 (x,y,z,w)，必须显式转换
+          ori_wxyz = self.data.sensor('BodyQuat').data.copy()
+          ori = R.from_quat(np.array([ori_wxyz[1], ori_wxyz[2], ori_wxyz[3], ori_wxyz[0]])).as_euler('xyz')
           ori += imu_eular_bias
-          ori = R.from_euler('xyz', ori).as_quat()
+          ori = R.from_euler('xyz', ori).as_quat()  # 返回 (x,y,z,w)
 
           vel = self.data.qvel[:3].copy()
           angVel = self.data.sensor('BodyGyro').data.copy()
@@ -159,10 +196,10 @@ class HumanoidSim(MuJoCoBase):
           bodyOdom.pose.pose.position.x = pos[0]
           bodyOdom.pose.pose.position.y = pos[1]
           bodyOdom.pose.pose.position.z = pos[2]
-          bodyOdom.pose.pose.orientation.x = ori[1]
-          bodyOdom.pose.pose.orientation.y = ori[2]
-          bodyOdom.pose.pose.orientation.z = ori[3]
-          bodyOdom.pose.pose.orientation.w = ori[0]
+          bodyOdom.pose.pose.orientation.x = ori[0]
+          bodyOdom.pose.pose.orientation.y = ori[1]
+          bodyOdom.pose.pose.orientation.z = ori[2]
+          bodyOdom.pose.pose.orientation.w = ori[3]
           bodyOdom.twist.twist.linear.x = vel[0]
           bodyOdom.twist.twist.linear.y = vel[1]
           bodyOdom.twist.twist.linear.z = vel[2]
@@ -180,14 +217,17 @@ class HumanoidSim(MuJoCoBase):
           bodyImu.linear_acceleration.x = acc[0]
           bodyImu.linear_acceleration.y = acc[1]
           bodyImu.linear_acceleration.z = acc[2]
-          bodyImu.orientation.x = ori[1]
-          bodyImu.orientation.y = ori[2]
-          bodyImu.orientation.z = ori[3]
-          bodyImu.orientation.w = ori[0]
+          bodyImu.orientation.x = ori[0]
+          bodyImu.orientation.y = ori[1]
+          bodyImu.orientation.z = ori[2]
+          bodyImu.orientation.w = ori[3]
           bodyImu.orientation_covariance = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
           bodyImu.angular_velocity_covariance = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
           bodyImu.linear_acceleration_covariance = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
           self.pubImu.publish(bodyImu)
+
+          self.updateContactFlag()
+          self.pubContactFlag.publish(self.contactFlag)
 
           publish_time = self.data.time
 
@@ -274,6 +314,8 @@ class HumanoidSim(MuJoCoBase):
       glfw.poll_events()
       
     glfw.terminate()
+    # 先 shutdown 让 rclpy.spin() 返回，再 join；否则 spin 线程永不退出，进程只能被 Ctrl+C 杀死
+    rclpy.shutdown()
     th_spin.join()
 
 def main():
@@ -288,8 +330,8 @@ def main():
     
     sim.simulate()
 
+    # rclpy 已在 simulate() 退出时 shutdown
     sim.node.destroy_node()
-    rclpy.shutdown()
 
 if __name__ == "__main__":
     main()

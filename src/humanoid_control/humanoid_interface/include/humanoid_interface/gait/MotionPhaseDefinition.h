@@ -79,7 +79,9 @@ inline contact_flag_t modeNumber2StanceLeg(const size_t& modeNumber) {
 /******************************************************************************************************/
 /******************************************************************************************************/
 inline size_t stanceLeg2ModeNumber(const contact_flag_t& stanceLegs) {
-  return static_cast<size_t>(stanceLegs[0]) + 2 * static_cast<size_t>(stanceLegs[3]);
+  // 接触顺序：[0]左脚 toe, [1]右脚 toe, [2]左脚 heel, [3]右脚 heel
+  // 以 toe 接触为代表判断左右（与 modeNumber2StanceLeg 对合法输入互为逆映射）
+  return static_cast<size_t>(stanceLegs[0]) + 2 * static_cast<size_t>(stanceLegs[1]);
 }
 
 /******************************************************************************************************/

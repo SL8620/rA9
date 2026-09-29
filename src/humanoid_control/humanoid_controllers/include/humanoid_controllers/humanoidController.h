@@ -4,6 +4,9 @@
 
 #pragma once
 
+#include <algorithm>
+#include <atomic>
+#include <thread>
 
 #include "rclcpp/rclcpp.hpp"
 #include <ocs2_centroidal_model/CentroidalModelRbdConversions.h>
@@ -50,6 +53,7 @@ class humanoidController{
   void jointStateCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg);
   void ImuCallback(const sensor_msgs::msg::Imu::SharedPtr msg);
   void HwSwitchCallback(const std_msgs::msg::Bool::SharedPtr msg);
+  void simContactFlagCallback(const std_msgs::msg::Int8MultiArray::SharedPtr msg);
 
   // Interface
   std::shared_ptr<HumanoidInterface> HumanoidInterface_;
@@ -92,6 +96,13 @@ class humanoidController{
 
   bool hwSwitch_ = false;
 
+  // 实测接触状态（默认关闭，见 task.info 的 stateEstimate.useMeasuredContact）
+  // 打开后状态估计器改用仿真/实机接触标志，而非用规划步态 plannedMode_ 推断
+  bool useMeasuredContact_ = false;
+  bool contactFlagReceived_ = false;
+  contact_flag_t measuredContactFlag_{};
+  rclcpp::Subscription<std_msgs::msg::Int8MultiArray>::SharedPtr simContactFlagPubSub_;
+
   // Node Handle
   rclcpp::Node::SharedPtr controllerNh_;
 
@@ -110,6 +121,9 @@ class humanoidController{
   size_t plannedMode_ = 3;
   vector_t defalutJointPos_;
   vector_t joint_pos_bias_;
+  vector_t kpGains_, kdGains_;
+  float velFilter_[12] = {0};       // 关节速度一阶低通滤波状态
+  const float kfJointVel_ = 0.3;    // 低通滤波系数（与消息频率耦合）
 };
 
 class humanoidCheaterController : public humanoidController {
