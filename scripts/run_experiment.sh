@@ -153,6 +153,34 @@ if [ "$CMD_VEL_DUR" -gt 0 ]; then
 fi
 echo "[run] cmd_vx=$CMD_VX mode=$CMD_VEL_MODE for ${DURATION}s"
 
+# 6.5) 扰动注入（可选，C6 交付需求 A2）。PUSH_DIR=lat|fwd PUSH_IMPULSE=N·s
+#    力幅 = 冲量/时长；作用点高于躯干 CoM（PUSH_R_Z，默认 0.3m）以力矩补偿
+#    M = r×F 表达：lat → F=(0,Fy,0), M=(−Rz·Fy,0,0)；fwd → F=(Fx,0,0), M=(0,Rz·Fx,0)。
+#    消息带 trigger_sim_time（当前 /sim_time + PUSH_DELAY_S），可重复发布而只
+#    生效一次（对抗 DDS 发现竞态又不重复施力）。
+PUSH_STATUS="none"
+if [ -n "${PUSH_IMPULSE:-}" ]; then
+  PUSH_DIR="${PUSH_DIR:-lat}"
+  PUSH_DURATION_MS="${PUSH_DURATION_MS:-80}"
+  PUSH_R_Z="${PUSH_R_Z:-0.3}"
+  PUSH_DELAY_S="${PUSH_DELAY_S:-5}"
+  F_MAG=$(awk "BEGIN{printf \"%.3f\", $PUSH_IMPULSE / ($PUSH_DURATION_MS/1000.0)}")
+  if [ "$PUSH_DIR" = "lat" ]; then
+    FX=0.0; FY=$F_MAG; FZ=0.0
+    MX=$(awk "BEGIN{printf \"%.3f\", -$PUSH_R_Z * $F_MAG}"); MY=0.0; MZ=0.0
+  else
+    FX=$F_MAG; FY=0.0; FZ=0.0
+    MX=0.0; MY=$(awk "BEGIN{printf \"%.3f\", $PUSH_R_Z * $F_MAG}"); MZ=0.0
+  fi
+  SIM_T=$(timeout 3 ros2 topic echo /sim_time --once 2>/dev/null | awk '/^data:/{print $2}')
+  TRIG=$(awk "BEGIN{printf \"%.3f\", ${SIM_T:-0} + $PUSH_DELAY_S}")
+  echo "[run] push: dir=$PUSH_DIR impulse=$PUSH_IMPULSE N·s F=$F_MAG N dur=${PUSH_DURATION_MS}ms trigger_sim=$TRIG"
+  timeout 3 ros2 topic pub -r 10 /sim_push std_msgs/msg/Float32MultiArray \
+    "{data: [$FX, $FY, $FZ, $MX, $MY, $MZ, $PUSH_DURATION_MS, $TRIG]}" >/dev/null 2>&1 &
+  PUSH_PUB_PID=$!
+  PUSH_STATUS="dir=$PUSH_DIR impulse=$PUSH_IMPULSE N.s duration_ms=$PUSH_DURATION_MS r_z=$PUSH_R_Z trigger_sim=$TRIG force_N=$F_MAG"
+fi
+
 # 7) 保持实验窗口（录包已在 2.4 启动）
 sleep "$REC_SECS"
 # 收尾必须等录包进程写完 metadata.yaml 否则 bag 读不了。
@@ -164,6 +192,7 @@ for i in $(seq 1 20); do
 done
 kill -9 $BAG_PID 2>/dev/null
 [ -n "$CMDVEL_PID" ] && kill $CMDVEL_PID 2>/dev/null
+[ -n "${PUSH_PUB_PID:-}" ] && kill $PUSH_PUB_PID 2>/dev/null
 
 # 8) 收尾：停输出、恢复暂停（先杀持续使能的发布者再关）
 kill $HWSW_PID 2>/dev/null
@@ -182,6 +211,14 @@ launch_rviz=$LAUNCH_RVIZ
 launch_render=$LAUNCH_RENDER
 duration_s=$DURATION
 record_s=$REC_SECS
+push_mode=${PUSH_IMPULSE:+force}
+push_dir=${PUSH_DIR:-}
+push_impulse=${PUSH_IMPULSE:-}
+push_duration_ms=${PUSH_DURATION_MS:-}
+push_body=${PUSH_IMPULSE:+base_link}
+push_r_z=${PUSH_R_Z:-}
+push_time_sim_trigger=${PUSH_STATUS##*trigger_sim=}
+push_spec=$PUSH_STATUS
 date=$(date -Iseconds)
 git_commit=$(git -C "$RA9_DIR" rev-parse HEAD)
 git_dirty=$(git -C "$RA9_DIR" status --porcelain | wc -l)

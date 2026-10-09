@@ -51,6 +51,17 @@ class HumanoidSim(MuJoCoBase):
     self.pubContactFlag = self.node.create_publisher(Int8MultiArray, '/simContactFlag', 2)
     # 仿真时间戳（秒），500Hz 仿真节拍随 500Hz 发布块一起发：RTF 跨度法测量用
     self.pubSimTime = self.node.create_publisher(Float64, '/sim_time', 2)
+    # 扰动注入 /sim_push：Float64MultiArray [fx,fy,fz, mx,my,mz, duration_ms]
+    # （N, N·m, ms）。以 wrench 形式施加在 base_link（躯干）上；作用点高于质心
+    # 由调用方以力矩补偿表达（M = r×F，r=作用点相对躯干 CoM 的偏移，如侧向推
+    # 作用于躯干顶部 r=(0,0,0.3) → Mx=−0.3·Fy）。持续时长按**仿真时间**计，
+    # 到期自动清零。C6 扰动实验（C6交付需求 A2）用。
+    self.push_body_id = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_BODY, 'base_link')
+    self.push_wrench = np.zeros(6)
+    self.push_left_s = 0.0
+    self.push_dur_s = 0.0
+    self.push_trigger = -2.0              # 未设置；-1=收到即施
+    self.node.create_subscription(Float32MultiArray, "/sim_push", self.pushCallback, 2)
     # 缓存上一步接触状态，供 500Hz 发布分支复用（在 1kHz step 中更新）
     self.contactFlag = Int8MultiArray()
     self.contactFlag.data = array.array('b', [0, 0, 0, 0])
@@ -133,6 +144,21 @@ class HumanoidSim(MuJoCoBase):
     self.contactFlag.data[2] = self.contactFlag.data[0]
     self.contactFlag.data[3] = self.contactFlag.data[1]
 
+  def pushCallback(self, data):
+    # [fx,fy,fz, mx,my,mz, duration_ms, trigger_sim_time]；duration 按仿真时间计。
+    # trigger_sim_time（可省略=立即）使消息可**重复发布**而只生效一次——
+    # 关键命令必须对抗 DDS 发现竞态，但重复施力会毁实验，故用触发时刻幂等。
+    v = list(data.data)
+    if len(v) < 7:
+      return
+    trigger = float(v[7]) if len(v) >= 8 else -1.0
+    if trigger == self.push_trigger:      # 重复消息（发现竞态期间的重发），忽略
+      return
+    self.push_trigger = trigger
+    self.push_wrench = np.array(v[:6], dtype=float)
+    self.push_dur_s = float(v[6]) * 1e-3
+    self.push_left_s = 0.0                # 等触发时刻再施力
+
   def targetTorqueCallback(self, data):
     self.targetTorque = np.array(list(data.data))
 
@@ -205,6 +231,16 @@ class HumanoidSim(MuJoCoBase):
         if now >= next_step_wall:
           # MIT control
           self.data.ctrl[:] = self.targetTorque + self.targetKp * (self.targetPos - self.data.qpos[-12:]) + self.targetKd * (self.targetVel - self.data.qvel[-12:])
+          # 扰动注入（按仿真时间计，到期清零；trigger_sim_time 幂等触发）
+          if self.push_left_s <= 0.0 and self.push_dur_s > 0.0 and \
+             (self.push_trigger < 0.0 or self.data.time >= self.push_trigger):
+            self.push_left_s = self.push_dur_s
+            self.push_dur_s = 0.0         # 已触发，防止再次启动
+          if self.push_left_s > 0.0:
+            self.data.xfrc_applied[self.push_body_id] = self.push_wrench
+            self.push_left_s -= self.model.opt.timestep
+          else:
+            self.data.xfrc_applied[self.push_body_id] = 0.0
           # Step simulation environment
           mj.mj_step(self.model, self.data)
           next_step_wall += 1.0 / self.sim_rate
