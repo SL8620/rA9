@@ -4,7 +4,7 @@ from .mujoco_base import MuJoCoBase
 from mujoco.glfw import glfw
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32MultiArray,Bool,Int8MultiArray
+from std_msgs.msg import Float32MultiArray,Bool,Int8MultiArray,Float64
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
 import time
@@ -49,6 +49,8 @@ class HumanoidSim(MuJoCoBase):
     self.pubSimState = self.node.create_publisher(Bool,'/pauseFlag', 2)
     # 实测接触标志，长度 4：[l_foot_toe, r_foot_toe, l_foot_heel, r_foot_heel]（同 ModelSettings.h 的 contactNames3DoF）
     self.pubContactFlag = self.node.create_publisher(Int8MultiArray, '/simContactFlag', 2)
+    # 仿真时间戳（秒），500Hz 仿真节拍随 500Hz 发布块一起发：RTF 跨度法测量用
+    self.pubSimTime = self.node.create_publisher(Float64, '/sim_time', 2)
     # 缓存上一步接触状态，供 500Hz 发布分支复用（在 1kHz step 中更新）
     self.contactFlag = Int8MultiArray()
     self.contactFlag.data = array.array('b', [0, 0, 0, 0])
@@ -72,6 +74,11 @@ class HumanoidSim(MuJoCoBase):
     # 批量实验模式：render:=false 跳过渲染/vsync（见 simulate() 内注释，
     # 渲染节拍会把物理拖到 ~0.5× 墙钟导致控制器失稳）
     self.render_enabled = self.node.declare_parameter('render', True).value
+    # 关 vsync：swap_buffers 在 vsync 下每帧阻塞到下一个垂直消隐（~16.7ms @60Hz），
+    # 而外层每帧只推进 1/60s 仿真时间，物理会被渲染节拍拖慢（见 simulate() 注释）。
+    # 批处理模式（render:=false）本就跳过 swap，不受影响。
+    if self.render_enabled:
+      glfw.swap_interval(0)
     #set the initial joint position
     self.data.qpos[:3] = init_base_pos
     # init rpy to init quaternion
@@ -161,8 +168,17 @@ class HumanoidSim(MuJoCoBase):
     th_spin.start()
     publish_time = self.data.time
     torque_publish_time = self.data.time
-    sim_epoch_start = time.time()
+    # 墙钟节拍：每 1/sim_rate 墙钟秒推进一个物理步（timestep 0.001、sim_rate 1000
+    # → RTF=1）。欠账**有界追赶**：渲染/发布停顿造成的落后在恢复后补步；
+    # 仅断点/系统级停顿（欠账 > MAX_CATCHUP_S）才裁剪。旧版 >0.1s 直接丢弃欠账，
+    # 把每次停顿永久计入 RTF 亏损（实测 0.018~0.908 逐次随机，控制器按墙钟跑、
+    # 时间基准不一致 → 自动 run 翻倒，见 deliverables/C6/analysis/NOTE.md §7）。
+    MAX_CATCHUP_S = 0.1
+    next_step_wall = time.perf_counter()
     while not glfw.window_should_close(self.window):
+      # 暂停期间保持墙钟锚点：解暂停不补跑暂停时长（否则一次性快进 0.1s 仿真）
+      if self.pause_flag:
+        next_step_wall = time.perf_counter()
       # 消费 /pauseCmd 请求 —— 与 SPACE 键盘回调完全相同的路径（置位 + mj_forward）
       if self.pause_request is not None:
         self.pause_flag = self.pause_request
@@ -184,16 +200,19 @@ class HumanoidSim(MuJoCoBase):
           simState = Bool()
           simState.data = self.pause_flag
           self.pause_flag_last = self.pause_flag
-          self.pubSimState.publish(simState)  
-        if (time.time() - sim_epoch_start >= 1.0 / self.sim_rate):
+          self.pubSimState.publish(simState)
+        now = time.perf_counter()
+        if now >= next_step_wall:
           # MIT control
           self.data.ctrl[:] = self.targetTorque + self.targetKp * (self.targetPos - self.data.qpos[-12:]) + self.targetKd * (self.targetVel - self.data.qvel[-12:])
           # Step simulation environment
           mj.mj_step(self.model, self.data)
-          # 按固定周期累加（扣除 step 本身的耗时），落后过多（如程序断点暂停）时重新对齐墙钟
-          sim_epoch_start += 1.0 / self.sim_rate
-          if time.time() - sim_epoch_start > 0.1:
-            sim_epoch_start = time.time()
+          next_step_wall += 1.0 / self.sim_rate
+          if now - next_step_wall > MAX_CATCHUP_S:
+            next_step_wall = now - MAX_CATCHUP_S
+        elif next_step_wall - now > 0.0005:
+          # 空等 >0.5ms 时让出 CPU（短等待保持忙等以降低步进抖动）
+          time.sleep(next_step_wall - now - 0.0002)
 
         
         if (self.data.time - publish_time >= 1.0 / 500.0):
@@ -256,6 +275,12 @@ class HumanoidSim(MuJoCoBase):
 
           self.updateContactFlag()
           self.pubContactFlag.publish(self.contactFlag)
+          # /sim_time：仿真时间戳（秒）。RTF = Δsim_time/Δwall（跨度法）。
+          # 条数法不可信——录包有 ~20% 整批丢包（2026-10-09 实测 7480/9320，
+          # 旧"RTF 0.015~0.759"结论全是条数法×丢包的伪影）。
+          simTimeMsg = Float64()
+          simTimeMsg.data = self.data.time
+          self.pubSimTime.publish(simTimeMsg)
 
           publish_time = self.data.time
 

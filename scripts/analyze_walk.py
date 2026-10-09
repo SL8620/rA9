@@ -55,7 +55,7 @@ DWELL_S = 0.3          # 进入目标带需保持时长
 
 WANT = {"/ground_truth/state", "/cmd_contactFlag", "/simContactFlag",
         "/targetTorque", "/realTorque", "/targetPos", "/jointsPosVel",
-        "/mpc_solve_time_ms", "/wbc_solve_time_ms", "/cmd_vel"}
+        "/mpc_solve_time_ms", "/wbc_solve_time_ms", "/cmd_vel", "/sim_time"}
 
 
 # ---------------------------------------------------------------- IO
@@ -421,18 +421,33 @@ def main():
     if np.isfinite(h_nom):
         metrics["height_nominal"] = h_nom
 
-    # ---- RTF（仿真实时率）----
-    # /simContactFlag 每 1/500 s **仿真时间**发一条，bag 时间戳是墙钟：
-    # RTF = 仿真跨度 / 墙钟跨度。不能用 observation.time 测（那是墙钟，恒 1.0）。
-    # RTF<0.5 = 仿真爬行、机器人"冻住"，实验实际未执行（auto_ab_04 假阳性教训）；
-    # 0.5~1 之间的时间放大 run 保留 VALID，但 RTF 行随 summary 输出，引用须注明。
-    rtf = float("nan")
+    # ---- RTF（仿真实时率）与录包捕获率 ----
+    # 真值法（有 /sim_time 时）：RTF = Δsim_time / Δbag 时间戳（跨度法，对丢包鲁棒）。
+    # 旧条数法（/simContactFlag 条数/500/跨度）把录包丢包算成 RTF 亏损——2026-10-09
+    # 实测录包对 500Hz 仿真话题整批丢 ~20%，旧"RTF 0.015~0.759 乱跳"即此伪影
+    # （auto_ab_04 实为录包饿死：22s 仅收 194 条，但间隔中位数 2.002ms 证明步进正常）。
+    # observation.time 是墙钟恒 1.0，不能测 RTF。条数法结果仅作"下限估计"。
+    rtf = capture = float("nan")
+    rtf_method = "无（缺话题）"
+    st_t, st_v = data["/sim_time"]
     sc_t, _ = data["/simContactFlag"]
-    if len(sc_t) > 1 and sc_t[-1] > sc_t[0]:
+    if len(st_t) > 1 and st_t[-1] > st_t[0] and st_v[-1, 0] > st_v[0, 0]:
+        sim_span = float(st_v[-1, 0] - st_v[0, 0])
+        rtf = sim_span / float(st_t[-1] - st_t[0])
+        rtf_method = "sim_time跨度法"
+        if len(sc_t) > 1:
+            capture = 100.0 * len(sc_t) / max(500.0 * sim_span, 1.0)
+    elif len(sc_t) > 1 and sc_t[-1] > sc_t[0]:
         rtf = ((len(sc_t) - 1) / 500.0) / float(sc_t[-1] - sc_t[0])
+        rtf_method = "条数法(下限估计,含丢包偏差)"
+    if np.isfinite(rtf):
         metrics["rtf"] = rtf
-        if rtf < 0.5:
-            problems.append(f"仿真冻结 RTF={rtf:.3f}（时间基准不一致，实验未实际执行）")
+        if rtf_method == "sim_time跨度法" and rtf < 0.5:
+            problems.append(f"仿真冻结 RTF={rtf:.3f}（实验未实际执行）")
+    if np.isfinite(capture):
+        metrics["capture_pct"] = capture
+        if capture < 50.0:
+            problems.append(f"录包捕获率 {capture:.0f}%（<50%，数据不可靠）")
 
     # ---- nan 判定 ----
     nan_items = [k for k, v in metrics.items() if isinstance(v, float) and np.isnan(v)]
@@ -480,8 +495,8 @@ def main():
 
     lines = [f"STATUS: {status}",
              f"bag: {a.bag}", f"cmd_vx: {a.cmd} m/s",
-             f"RTF: {f2(metrics.get('rtf', float('nan')),3)}"
-             f"（1.0=实时；<0.5 判仿真冻结；实机 bag 无 /simContactFlag 为 nan）",
+             f"RTF: {f2(metrics.get('rtf', float('nan')),3)} [{rtf_method}]  "
+             f"录包捕获率: {f2(capture,1)}%（/simContactFlag 实收/应发）",
              f"steady window: [{f2(w_lo-t0,2)}, {f2(w_hi-t0,2)}] s  ({win_note})",
              f"unpaused: [{f2(un_lo-t0,2)}, {f2(un_hi-t0,2)}] s, "
              f"paused_fraction = {f2(paused_fraction,3)}", "",

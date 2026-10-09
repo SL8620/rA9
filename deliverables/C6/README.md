@@ -74,8 +74,12 @@ deliverables/C6/
 - `analysis/runs_status.md`：全部存量 run 的 STATUS/RTF 一览（无静默缺数）。
 - `analysis/<run>/`：两个可用样本（walk_smoke_001、manual_repro_003）的
   summary/metrics/fig1–4 完整拷贝；其余 run 判 INVALID，看 `runs_status.md`。
-- **存量 run 全部 RTF≠1.0**（时间基准不一致，见 NOTE §7），定量引用须以
-  RTF 修复后重录的 A1 基准为准；旧 run 只作定性/方法学展示。
+- **2026-10-09 更新**：自动 run 翻倒根因已定位并修复（使能竞态 + 参考未重锚，
+  见 NOTE §7）；旧"RTF≠1 时间基准不一致"结论**是测量伪影已废除**（NOTE §8：
+  仿真节拍 RTF=1.000，录包有 ~20% 整批丢包）。修复后回归 run
+  （rtf_smoke_004/005、rtf_verify_001、rtf_final_001）全 VALID，RTF 1.000。
+  **A1/A2 收数可按正常流程进行**；分析口径以 `/sim_time` 跨度法 RTF +
+  录包捕获率为准。
 
 ## 规矩
 

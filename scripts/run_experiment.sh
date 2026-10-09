@@ -51,7 +51,7 @@ ros2 bag record -o "$OUT/bag" \
   /humanoid/desiredFeetTrajectory/LHEEL /humanoid/desiredFeetTrajectory/RHEEL \
   /ground_truth/state /jointsPosVel /imu /pauseFlag /simContactFlag /cmd_contactFlag \
   /targetTorque /targetPos /targetVel /targetKp /targetKd /realTorque /foot_vel_estimate \
-  /mpc_solve_time_ms /wbc_solve_time_ms /cmd_vel /hwswitch /pauseCmd \
+  /mpc_solve_time_ms /wbc_solve_time_ms /cmd_vel /hwswitch /pauseCmd /sim_time \
   > "$OUT/bag_record.log" 2>&1 &
 BAG_PID=$!
 
@@ -64,10 +64,33 @@ sleep 0.5
 #    关键命令一律重复发布数秒（run_experiment 早期版本 3 连发全部丢失）。
 ros2 topic pub -r 2 /hwswitch std_msgs/msg/Bool "data: true" >/dev/null 2>&1 &
 HWSW_PID=$!
-# 使能→解暂停的等待：仿真暂停时控制器仍以 500Hz 跑、MPC 在冻结时刻反复求解，
-# 这段时间是 MPC 策略的收敛时间。手动操作天然有几十秒间隔，自动化若只等 2 s
-# 会在策略未收敛时就放开物理 → 解暂停后 0.3s 内塌陷。PRE_UNPAUSE_WAIT 可调。
+# 使能确认（关键，2026-10-09）：/hwswitch 发出 ≠ 控制器收到。实测 rtf_smoke_001
+# 中控制器的订阅晚 ~2.5s 才建立（DDS 发现竞态），解暂停瞬间 /targetTorque 尚未
+# 流出 → sim 侧 targetKp/targetTorque 缓存为 0 → 无力矩自由落体，0.5s 内倒地。
+# manual_repro_003 走通正是因为人工提前 3 分钟使能、力矩早已在流。
+# 故此处不盲等，改为确认 /targetTorque 真的在流（hwSwitch_ 门控已生效）再继续。
+echo "[run] waiting for enable to take effect (/targetTorque streaming)..."
+ENABLED=0
+for i in $(seq 1 60); do
+  if timeout 2 ros2 topic echo /targetTorque --once >/dev/null 2>&1; then
+    ENABLED=1; echo "[run] enable confirmed after ${i} checks"; break
+  fi
+done
+if [ "$ENABLED" != "1" ]; then
+  echo "[run] ERROR: 使能 120s 内未生效（/targetTorque 未流出），中止（否则必翻）"
+  exit 1
+fi
+# 使能→解暂停的等待：仿真暂停时控制器仍以 500Hz 跑、MPC 在冻结时刻反复求解。
 PRE_UNPAUSE_WAIT="${PRE_UNPAUSE_WAIT:-2}"
+
+# 3.5) 解暂停前"喂"零速指令，把 MPC 参考重锚到标准站立参考（关键，2026-10-09）。
+#    cmdVelToTargetTrajectories（TargetTrajectoriesPublisher.cpp）会把参考设为
+#    (r_c 速度=cmd, 基座高度=comHeight 0.952, 关节=defaultJointState)；若参考只有
+#    starting() 的"保持冻结状态"，MPC 会收敛到 sum|τ_ff|≈42 Nm 的弱解（撑不住
+#    62 kg），解暂停即坠。manual_repro_003 走通正因 teleop 零速广播重锚过参考
+#    （实测其 τ_ff 全程 190~207 Nm 的站立支撑解）。等待 45s 无效——解是稳定的，
+#    不是收敛时间问题。
+timeout 4 ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}" >/dev/null 2>&1
 sleep "$PRE_UNPAUSE_WAIT"
 
 # 4) 解除仿真暂停（替代手动按 SPACE），重复发 2s 破发现竞态
