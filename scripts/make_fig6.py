@@ -330,6 +330,145 @@ def fig4():
     print("  WBC:", cap(wbc, over_w, 2))
 
 
+
+
+
+# ---------------------------------------------------------- fig6_5
+def fig5(state="stand", direction="lat"):
+    """扰动恢复 2x2：(a) 滚转角三档三线 (b) 侧向偏移 (c) 髋滚转力矩+参考线
+    (d) t_rec/峰值姿态随冲量散点+线性拟合。数据=A2 扰动 run（回执定位 t=0）。"""
+    import re
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from rosbag2_py import ConverterOptions, SequentialReader, StorageOptions
+    from rclpy.serialization import deserialize_message
+    from rosidl_runtime_py.utilities import get_message
+    plt.rcParams["font.family"] = FONT
+    plt.rcParams["axes.unicode_minus"] = False
+
+    def load_push(name):
+        want = {"/sim_time", "/sim_push_fired", "/ground_truth/state", "/realTorque"}
+        r = SequentialReader()
+        r.open(StorageOptions(uri=os.path.join(RA9, "experiments", name, "bag"),
+                              storage_id="mcap"), ConverterOptions("", ""))
+        types = {t.name: get_message(t.type) for t in r.get_all_topics_and_types()
+                 if t.name in want}
+        ev = {k: [] for k in want}
+        while r.has_next():
+            topic, data, ts = r.read_next()
+            if topic in types:
+                ev[topic].append((ts*1e-9, deserialize_message(data, types[topic])))
+        return ev
+
+    levels = {"L1": 3.1, "L2": 6.2, "L3": 12.4}
+    series = {}     # level -> list of (t_rel, roll_dev, offset_dev, hip)
+    scatter = []    # (impulse, t_rec, peak_att)
+    for lv, imp in levels.items():
+        series[lv] = []
+        for name in sorted(glob.glob(os.path.join(RA9, "experiments",
+                                                  f"sim_push_{direction}_{lv}_{state}_*"))):
+            ps = os.path.join(name, "analysis", "push_summary.txt")
+            if not os.path.exists(ps):
+                continue
+            txt = open(ps).read()
+            if "注入疑似未生效" in txt or "注入前已倒地" in txt:
+                continue
+            ev = load_push(os.path.basename(name))
+            if not ev["/sim_push_fired"]:
+                continue
+            t0 = ev["/sim_push_fired"][0][0]
+            gt = np.array([[t] + [m.pose.pose.position.x, m.pose.pose.position.y,
+                                  m.pose.pose.position.z] +
+                           [__import__("math").atan2(2*(m.pose.pose.orientation.w*m.pose.pose.orientation.x +
+                                                        m.pose.pose.orientation.y*m.pose.pose.orientation.z),
+                                                     1-2*(m.pose.pose.orientation.x**2 +
+                                                          m.pose.pose.orientation.y**2))]
+                           for t, m in ev["/ground_truth/state"]])
+            t, px, py, pz, roll = gt[:, 0]-t0, gt[:, 1], gt[:, 2], gt[:, 3], gt[:, 4]
+            pre = (t >= -1) & (t < 0)
+            r0, a0 = roll[pre].mean(), (py[pre].mean() if direction == "lat" else px[pre].mean())
+            axis = py - a0 if direction == "lat" else px - a0
+            w = (t >= -1) & (t <= 6)
+            hip = np.array([[tt, max(abs(m.data[0]), abs(m.data[6]))]
+                            for tt, m in ev["/realTorque"]])
+            hip[:, 0] -= t0
+            series[lv].append((t[w], roll[w]-r0, axis[w], hip))
+            m5 = (hip[:, 0] >= 0) & (hip[:, 0] <= 5)
+            tr = re.search(r"t_rec=([0-9.]+|NA\S*)", txt)
+            trv = float(tr.group(1)) if tr and tr.group(1)[0].isdigit() else float("nan")
+            scatter.append((imp, trv, float(np.abs(roll[w]-r0).max())))
+
+    fig, axes = plt.subplots(2, 2, figsize=(6.8, 3.6))
+    colors = {"L1": BLUE, "L2": GREEN, "L3": RED}
+    grid = np.arange(-1, 6, 0.01)   # 公共时间栅格：各 run 采样长度不同
+    for lv in levels:
+        if not series[lv]:
+            continue
+        rl = np.nanmean([np.interp(grid, s[0], s[1], left=np.nan, right=np.nan)
+                         for s in series[lv]], axis=0)
+        off = np.nanmean([np.interp(grid, s[0], s[2], left=np.nan, right=np.nan)
+                          for s in series[lv]], axis=0)
+        axes[0, 0].plot(grid, rl*180/np.pi, color=colors[lv],
+                        label=f"{lv}（{levels[lv]} N·s，n={len(series[lv])}）")
+        axes[0, 1].plot(grid, off*100, color=colors[lv], label=lv)
+    axes[0, 0].axhline(0.05*180/np.pi, color=GREY, ls="--", lw=.8)
+    axes[0, 0].axhline(-0.05*180/np.pi, color=GREY, ls="--", lw=.8)
+    axes[0, 0].axvline(0, color=GREY, ls=":", lw=.8)
+    axes[0, 0].set_xlabel("t - t_push [s]", fontsize=9)
+    axes[0, 0].set_ylabel("滚转角偏差 [°]", fontsize=9)
+    axes[0, 0].legend(fontsize=7, frameon=False)
+    axes[0, 1].axvline(0, color=GREY, ls=":", lw=.8)
+    axes[0, 1].set_xlabel("t - t_push [s]", fontsize=9)
+    axes[0, 1].set_ylabel(f"{'侧向' if direction=='lat' else '纵向'}偏移 [cm]", fontsize=9)
+    axes[0, 1].legend(fontsize=7, frameon=False)
+    for lv in levels:
+        if not series[lv]:
+            continue
+        hps = np.mean([np.interp(np.arange(0, 5, .02), s[3][:, 0], s[3][:, 1],
+                                 left=np.nan, right=np.nan) for s in series[lv]], axis=0)
+        axes[1, 0].plot(np.arange(0, 5, .02), hps, color=colors[lv], label=lv)
+    axes[1, 0].axhline(143.89, color=RED, ls="--", lw=.8, label="143.89 Nm")
+    axes[1, 0].axhline(220, color=RED, ls=":", lw=.8, label="220 Nm")
+    axes[1, 0].set_xlabel("t - t_push [s]", fontsize=9)
+    axes[1, 0].set_ylabel("髋滚转力矩峰值 [N·m]", fontsize=9)
+    axes[1, 0].legend(fontsize=7, frameon=False)
+    imp_a = np.array([s[0] for s in scatter])
+    tr_a = np.array([s[1] for s in scatter])
+    pk_a = np.array([s[2] for s in scatter])*180/np.pi
+    ok = np.isfinite(tr_a)
+    axes[1, 1].plot(imp_a[ok], tr_a[ok], "o", ms=4, color=BLUE, label="t_rec")
+    axes[1, 1].plot(imp_a[~ok], np.zeros((~ok).sum()), "x", ms=5, color=GREY,
+                    label="t_rec=NA(未恢复)")
+    if ok.sum() >= 2:
+        k, b = np.polyfit(imp_a[ok], tr_a[ok], 1)
+        xs = np.linspace(imp_a.min(), imp_a.max(), 20)
+        axes[1, 1].plot(xs, k*xs+b, color=BLUE, lw=.9, ls="--")
+        axes[1, 1].annotate(f"t_rec≈{k:.3f}·J{b:+.2f}", (0.03, .9),
+                            xycoords="axes fraction", fontsize=7, color=BLUE)
+    ax2 = axes[1, 1].twinx()
+    ax2.plot(imp_a, pk_a, "s", ms=3.5, color=RED, alpha=.7, label="峰值姿态")
+    ax2.set_ylabel("峰值姿态偏差 [°]", fontsize=8, color=RED)
+    ax2.tick_params(colors=RED, labelsize=7)
+    axes[1, 1].set_xlabel("冲量 J [N·s]", fontsize=9)
+    axes[1, 1].set_ylabel("t_rec [s]", fontsize=9)
+    axes[1, 1].legend(fontsize=7, frameon=False, loc="upper left")
+    for ax in (axes[0, 0], axes[0, 1], axes[1, 0]):
+        ax.grid(alpha=.25)
+    axes[1, 1].grid(alpha=.25)
+    for ax in (axes[0, 0], axes[0, 1], axes[1, 0], axes[1, 1]):
+        ax.tick_params(colors=GREY, labelsize=8)
+        for s in ax.spines.values():
+            s.set_color(GREY)
+    fig.tight_layout()
+    tag = f"{direction}_{state}"
+    for ext in ("png", "svg"):
+        fig.savefig(os.path.join(OUT, f"fig6_5_recovery_{tag}.{ext}"),
+                    dpi=300 if ext == "png" else None)
+    plt.close(fig)
+    print(f"fig6_5[{tag}] done ->", OUT, f"(samples: {len(scatter)})")
+
+
 if __name__ == "__main__":
     what = sys.argv[1] if len(sys.argv) > 1 else "all"
     if what in ("fig2", "all"):
@@ -338,3 +477,7 @@ if __name__ == "__main__":
         fig3()
     if what in ("fig4", "all"):
         fig4()
+    if what in ("fig5", "all"):
+        fig5("stand", "lat")
+        fig5("stand", "fwd")
+        fig5("walk", "lat")

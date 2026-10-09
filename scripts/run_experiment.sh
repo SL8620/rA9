@@ -219,7 +219,7 @@ push_impulse=${PUSH_IMPULSE:-}
 push_duration_ms=${PUSH_DURATION_MS:-}
 push_body=${PUSH_IMPULSE:+base_link}
 push_r_z=${PUSH_R_Z:-}
-push_time_sim_trigger=${PUSH_STATUS##*trigger_sim=}
+push_time_sim_trigger=${PUSH_IMPULSE:+immediate}
 push_spec=$PUSH_STATUS
 date=$(date -Iseconds)
 git_commit=$(git -C "$RA9_DIR" rev-parse HEAD)

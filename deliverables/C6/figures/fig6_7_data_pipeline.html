@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>实验数据采集与分析流程图</title>
+<style>
+  :root { --bg:#fff; --text:#1a1a2e; --tl:#555; --accent:#34a853; --accent2:#4285f4; --shade:#34a85320; --shade2:#4285f415; }
+  @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1a1a2e;--text:#e0e0e0;--tl:#aaa;--accent:#5adb7a;--accent2:#5e9eff;--shade:#5adb7a20;--shade2:#5e9eff18;}}
+  [data-theme="dark"]{--bg:#1a1a2e;--text:#e0e0e0;--tl:#aaa;--accent:#5adb7a;--accent2:#5e9eff;--shade:#5adb7a20;--shade2:#5e9eff18;}
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--text);font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:24px 16px;}
+  .container{max-width:900px;width:100%;}
+  .caption{text-align:center;font-size:14px;color:var(--tl);margin-top:16px;line-height:1.6;}
+  .caption strong{color:var(--text);}
+  svg{width:100%;height:auto;display:block;}
+</style>
+</head>
+<body>
+<div class="container">
+<svg viewBox="0 0 880 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="fig67-title fig67-desc">
+  <title id="fig67-title">实验数据采集与分析流程图</title>
+  <desc id="fig67-desc">流程图：实验执行产生 rosbag 录包，经分析脚本生成指标表，输出图表与实验结论；params.txt 留档支持复现校验并回环至实验执行。</desc>
+
+  <defs>
+    <marker id="fe" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="var(--tl)"/></marker>
+    <marker id="fg" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="var(--accent)"/></marker>
+    <marker id="fb" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="var(--accent2)"/></marker>
+  </defs>
+
+  <!-- ===== 连接线（先于方框绘制） ===== -->
+  <!-- 主流程：实验执行 → 录包 → 分析脚本 → 指标表 → 图表结论 -->
+  <line x1="232" y1="112" x2="232" y2="140" stroke="var(--tl)" stroke-width="1.5" marker-end="url(#fe)"/>
+  <line x1="232" y1="208" x2="232" y2="236" stroke="var(--tl)" stroke-width="1.5" marker-end="url(#fe)"/>
+  <line x1="232" y1="304" x2="232" y2="332" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#fg)"/>
+  <line x1="232" y1="400" x2="232" y2="428" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#fg)"/>
+
+  <!-- 回环：params.txt 留档 → 复现校验 → 回到实验执行 -->
+  <path d="M 424 460 H 592 Q 600 460 600 452 V 80 Q 600 72 592 72 H 424"
+        fill="none" stroke="var(--accent2)" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#fb)"/>
+  <rect x="330" y="256" width="272" height="24" rx="2" fill="var(--bg)"/>
+  <text x="338" y="272" font-size="12" fill="var(--accent2)">params.txt 留档（提交哈希/RTF/捕获率）→ 复现校验</text>
+
+  <!-- ===== 节点 ===== -->
+  <!-- 1 实验执行 -->
+  <rect x="56" y="48" width="352" height="64" rx="6" fill="var(--bg)"/>
+  <rect x="56" y="48" width="352" height="64" rx="6" fill="#ffffff" stroke="var(--tl)" stroke-width="1"/>
+  <text x="232" y="74" font-size="13" font-weight="600" fill="var(--text)" text-anchor="middle">实验执行</text>
+  <text x="232" y="96" font-size="11" fill="var(--tl)" text-anchor="middle">run_experiment.sh / run_push.sh：使能→解暂停→步态/速度→扰动注入</text>
+
+  <!-- 2 录包 -->
+  <rect x="56" y="144" width="352" height="64" rx="6" fill="var(--bg)"/>
+  <rect x="56" y="144" width="352" height="64" rx="6" fill="#ffffff" stroke="var(--tl)" stroke-width="1"/>
+  <text x="232" y="170" font-size="13" font-weight="600" fill="var(--text)" text-anchor="middle">rosbag2 录包</text>
+  <text x="232" y="192" font-size="11" fill="var(--tl)" text-anchor="middle">全话题 MCAP，含 /sim_time 与 /sim_push_fired 回执</text>
+
+  <!-- 3 分析脚本（焦点） -->
+  <rect x="56" y="240" width="352" height="64" rx="6" fill="var(--bg)"/>
+  <rect x="56" y="240" width="352" height="64" rx="6" fill="var(--shade)" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="232" y="266" font-size="13" font-weight="600" fill="var(--text)" text-anchor="middle">分析脚本</text>
+  <text x="232" y="288" font-size="11" fill="var(--tl)" text-anchor="middle">analyze_walk.py（四类指标）/ analyze_push.py（扰动恢复）</text>
+
+  <!-- 4 指标表（焦点） -->
+  <rect x="56" y="336" width="352" height="64" rx="6" fill="var(--bg)"/>
+  <rect x="56" y="336" width="352" height="64" rx="6" fill="var(--shade)" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="232" y="362" font-size="13" font-weight="600" fill="var(--text)" text-anchor="middle">指标表</text>
+  <text x="232" y="384" font-size="11" fill="var(--tl)" text-anchor="middle">summary.txt / metrics.csv / push_summary.txt（RTF、捕获率随附）</text>
+
+  <!-- 5 图表结论 -->
+  <rect x="56" y="432" width="352" height="64" rx="6" fill="var(--bg)"/>
+  <rect x="56" y="432" width="352" height="64" rx="6" fill="var(--shade2)" stroke="var(--accent2)" stroke-width="1.2"/>
+  <text x="232" y="458" font-size="13" font-weight="600" fill="var(--text)" text-anchor="middle">图表与实验结论</text>
+  <text x="232" y="480" font-size="11" fill="var(--tl)" text-anchor="middle">图 6.1–6.8 → 6.4–6.6 实验分析 → 6.6 目标闭环</text>
+</svg>
+<div class="caption">
+  <strong>图6.7 实验数据采集与分析流程</strong><br>
+  录包与参数留档保证任意数字可由脚本复算；复现校验发现偏差时回环修正实验或分析口径
+</div>
+</div>
+</body>
+</html>

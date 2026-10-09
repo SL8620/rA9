@@ -88,8 +88,10 @@ def main():
 
     # ---- 注入时刻：以 sim 的 /sim_push_fired 回执为准（实际施力时刻），
     # 无回执才退回 params 的 trigger_sim 插值（旧 run 兼容）----
-    push_trig_sim = float(params.get("push_time_sim_trigger", "nan").split()[0]
-                          if params.get("push_time_sim_trigger") else "nan")
+    try:
+        push_trig_sim = float(params.get("push_time_sim_trigger", "nan").split()[0])
+    except ValueError:
+        push_trig_sim = float("nan")   # 新版字段是 "immediate"/spec 串，非数值
     fired = data["/sim_push_fired"]
     st = data["/sim_time"]
     if fired:
