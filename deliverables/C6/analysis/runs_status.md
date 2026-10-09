@@ -29,4 +29,17 @@
 | rtf_smoke_004 | 0.0 | VALID | 0.843 |
 | rtf_smoke_005 | 0.1 | VALID | 0.841 |
 | rtf_verify_001 | 0.1 | VALID | 1.000 |
+| sim_base_v00_01 | 0.0 | VALID | 1.000 |
+| sim_base_v00_02 | 0.0 | INVALID(倒地/姿态超限(86% 样本, 基准高 0.42 m); 高度均值 0.63 m(<0.70, 疑倒地)) | 0.993 |
+| sim_base_v00_03 | 0.0 | VALID | 1.000 |
+| sim_base_v00_04 | 0.0 | VALID | 1.000 |
+| sim_base_v01_01 | 0.1 | VALID | 1.000 |
+| sim_base_v01_02 | 0.1 | VALID | 1.000 |
+| sim_base_v01_03 | 0.1 | VALID | 1.000 |
+| sim_base_v03_01 | 0.3 | INVALID(缺话题 /simContactFlag//realTorque; 接触标志为空/维度不符; 力矩话题为空（/realTorque 只在仿真非暂停时发布）) | nan |
+| sim_base_v03_02 | 0.3 | VALID | 0.990 |
+| sim_base_v03_03_VOID | 0.3 | INVALID(倒地/姿态超限(49% 样本, 基准高 0.87 m); 高度均值 -0.05 m(<0.70, 疑倒地)) | 1.000 |
+| sim_base_v03_04 | 0.3 | VALID | 1.000 |
+| sim_base_v03_05_VOID | 0.3 | INVALID(缺话题 /simContactFlag//realTorque; 接触标志为空/维度不符; 力矩话题为空（/realTorque 只在仿真非暂停时发布）) | nan |
+| sim_base_v03_06 | 0.3 | VALID | 1.000 |
 | walk_smoke_001 | 0.3 | INVALID(无 /mpc_solve_time_ms（旧 bag 未埋点）) | 0.818 |

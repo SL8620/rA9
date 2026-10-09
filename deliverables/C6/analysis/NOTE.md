@@ -95,6 +95,15 @@ agree 98.1%、switch_err 13.5 ms；rtf_smoke_005（cmd_vx=0.1 行走）STATUS VA
 注：旧"PRE_UNPAUSE_WAIT 2s vs 30s 相同"的排除结论是**被根因①混淆的**（当时
 怎么等都先自由落体）；45 s 实验证明 MPC 收敛时间本身确实不是因素。
 
+**根因 ③`/pauseCmd` 同款竞态**（A1 收采中发现）：解暂停命令 `timeout 3` 单次
+发布可能整批丢失（DDS 发现竞态）→ sim 全程不解暂停，run 整个没有步进数据。
+指纹：`/realTorque`、`/simContactFlag`、`/sim_time` 全 0 条，而 `/imu`、
+`/ground_truth/state` 各 ~18 万条（暂停分支 ~9 kHz 刷屏）。sim_base_v03_01、
+v03_05、rtf_prof_001 即此死因（早期误判为"录包饿死"）。修复：解暂停循环发
+并**以 /sim_time 在流为成功判据**，60 s 未生效则中止该 run。经验法则：
+**脚本发的任何关键命令都要"验证生效"而不是"发完即信"**（/hwswitch、
+/pauseCmd 均已验证化）。
+
 ## 8. RTF（仿真实时率）——旧"RTF 乱跳"结论是测量伪影 ✅ 已澄清
 
 **2026-10-09 结论：仿真节拍一直是 ~1.0；旧"RTF 0.015~0.759 乱跳、控制/植物

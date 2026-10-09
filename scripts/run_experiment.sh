@@ -12,6 +12,12 @@ REC_SECS="${5:-15}"
 
 RA9_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$RA9_DIR/experiments/$NAME"
+# 防覆盖护栏（2026-10-09 教训：同名补录会让 rosbag 拒写而 params.txt 被新 run
+# 覆盖 → bag 与 params 出处不一致，provenance 作废）。已有 bag 的目录一律拒绝。
+if [ -e "$OUT/bag" ]; then
+  echo "[run] ERROR: $OUT/bag 已存在，拒绝覆盖实验数据。换名重录（如 _05）或先归档。"
+  exit 1
+fi
 mkdir -p "$OUT"
 
 # ROS setup 脚本引用未绑定变量，与 set -u 不兼容，source 期间放开
@@ -93,9 +99,22 @@ PRE_UNPAUSE_WAIT="${PRE_UNPAUSE_WAIT:-2}"
 timeout 4 ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}" >/dev/null 2>&1
 sleep "$PRE_UNPAUSE_WAIT"
 
-# 4) 解除仿真暂停（替代手动按 SPACE），重复发 2s 破发现竞态
-timeout 3 ros2 topic pub -r 5 /pauseCmd std_msgs/msg/Bool "data: false" >/dev/null 2>&1
-echo "[run] sim unpaused"
+# 4) 解除仿真暂停（替代手动按 SPACE）——必须**验证**，不能盲发（2026-10-09）。
+#    /pauseCmd 同样有 DDS 发现竞态：timeout 3 单次发布可能整批丢失 → sim 永不解暂停
+#    （指纹：/realTorque /simContactFlag /sim_time 全 0 条，而 /imu /ground_truth
+#    在暂停分支 9kHz 刷屏）。v03_01/v03_05/rtf_prof_001 即此死因。
+echo "[run] unpausing (verified via /sim_time)..."
+UNPAUSED=0
+for i in $(seq 1 30); do
+  timeout 2 ros2 topic pub -r 5 /pauseCmd std_msgs/msg/Bool "data: false" >/dev/null 2>&1
+  if timeout 2 ros2 topic echo /sim_time --once >/dev/null 2>&1; then
+    UNPAUSED=1; echo "[run] sim unpaused (attempt $i)"; break
+  fi
+done
+if [ "$UNPAUSED" != "1" ]; then
+  echo "[run] ERROR: 解暂停 60s 未生效（/sim_time 未流出），中止（否则整 run 无步进数据）"
+  exit 1
+fi
 
 # 5) 发步态（ModeSchedule 与 gait 字符串双通道，复刻键盘节点行为；
 #    模板值取自 humanoid_interface/config/command/gait_.info，模式编码 LCONTACT=1 RCONTACT=2 STANCE=3）
