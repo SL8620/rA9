@@ -21,7 +21,14 @@ source "$RA9_DIR/install/setup.bash"
 set -u
 
 # 1) 启动闭环（仿真默认暂停、hwswitch 默认关 —— 都由本脚本控制）
-ros2 launch humanoid_controllers load_cheat_controller.launch.py teleop:=false rviz:=false render:=false > "$OUT/launch.log" 2>&1 &
+#    launch 标志默认 teleop:=false rviz:=false render:=false（批量实验最优）。
+#    允许用环境变量覆盖，用于排查自动化翻倒与手动成功的差异。
+LAUNCH_TELEOP="${LAUNCH_TELEOP:-false}"
+LAUNCH_RVIZ="${LAUNCH_RVIZ:-false}"
+LAUNCH_RENDER="${LAUNCH_RENDER:-false}"
+echo "[run] launch flags: teleop:=$LAUNCH_TELEOP rviz:=$LAUNCH_RVIZ render:=$LAUNCH_RENDER"
+ros2 launch humanoid_controllers load_cheat_controller.launch.py \
+  teleop:=$LAUNCH_TELEOP rviz:=$LAUNCH_RVIZ render:=$LAUNCH_RENDER > "$OUT/launch.log" 2>&1 &
 LAUNCH_PID=$!
 trap 'kill $LAUNCH_PID 2>/dev/null; sleep 2; pkill -f "cheat_controller_node" 2>/dev/null; pkill -f "humanoid_mujoco_sim/humanoid_sim" 2>/dev/null; pkill -f "humanoid_target_trajectories_publisher" 2>/dev/null; pkill -f "humanoid_gait_command" 2>/dev/null; pkill -f "humanoid_mujoco_sim/teleop" 2>/dev/null; pkill -f rviz2 2>/dev/null' EXIT
 
@@ -44,7 +51,7 @@ ros2 bag record -o "$OUT/bag" \
   /humanoid/desiredFeetTrajectory/LHEEL /humanoid/desiredFeetTrajectory/RHEEL \
   /ground_truth/state /jointsPosVel /imu /pauseFlag /simContactFlag /cmd_contactFlag \
   /targetTorque /targetPos /targetVel /targetKp /targetKd /realTorque /foot_vel_estimate \
-  /mpc_solve_time_ms /wbc_solve_time_ms /cmd_vel \
+  /mpc_solve_time_ms /wbc_solve_time_ms /cmd_vel /hwswitch /pauseCmd \
   > "$OUT/bag_record.log" 2>&1 &
 BAG_PID=$!
 
@@ -57,7 +64,11 @@ sleep 0.5
 #    关键命令一律重复发布数秒（run_experiment 早期版本 3 连发全部丢失）。
 ros2 topic pub -r 2 /hwswitch std_msgs/msg/Bool "data: true" >/dev/null 2>&1 &
 HWSW_PID=$!
-sleep 2
+# 使能→解暂停的等待：仿真暂停时控制器仍以 500Hz 跑、MPC 在冻结时刻反复求解，
+# 这段时间是 MPC 策略的收敛时间。手动操作天然有几十秒间隔，自动化若只等 2 s
+# 会在策略未收敛时就放开物理 → 解暂停后 0.3s 内塌陷。PRE_UNPAUSE_WAIT 可调。
+PRE_UNPAUSE_WAIT="${PRE_UNPAUSE_WAIT:-2}"
+sleep "$PRE_UNPAUSE_WAIT"
 
 # 4) 解除仿真暂停（替代手动按 SPACE），重复发 2s 破发现竞态
 timeout 3 ros2 topic pub -r 5 /pauseCmd std_msgs/msg/Bool "data: false" >/dev/null 2>&1
@@ -76,10 +87,29 @@ timeout 3 ros2 topic pub -r 2 /humanoid_gait_mode_schedule std_msgs/msg/String "
 timeout 3 ros2 topic pub -r 2 /humanoid_mpc_mode_schedule ocs2_msgs/msg/ModeSchedule "{event_times: $TIMES, mode_sequence: $SEQ}" >/dev/null 2>&1
 echo "[run] gait=$GAIT"
 
-# 6) 发速度指令（teleop 同款 /cmd_vel；值为 reference_.info 缩放前的归一化指令）
-ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: $CMD_VX, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}" >/dev/null 2>&1 &
-CMDVEL_PID=$!
-echo "[run] cmd_vx=$CMD_VX for ${DURATION}s"
+# 6) 发速度指令。
+#    /cmd_vel 单位就是 m/s，TargetTrajectoriesPublisher 直接把它当目标速度
+#    （cmdVel[0]=msg->linear.x，无缩放；reference_.info 的 0.7 只用于位姿目标路径）。
+#    CMD_VEL_MODE 控制发送方式（默认 continuous，保持历史行为）：
+#      continuous - 全程 -r 20 连续发
+#      burst      - 只发 2 s 就停（用于验证「连续覆盖参考」是否为翻倒根因）
+#      none       - 完全不发
+CMD_VEL_MODE="${CMD_VEL_MODE:-continuous}"
+CMDVEL_PID=""
+case "$CMD_VEL_MODE" in
+  continuous) CMD_VEL_DUR="$DURATION" ;;
+  burst)      CMD_VEL_DUR=2 ;;
+  none)       CMD_VEL_DUR=0 ;;
+  *) echo "[run] ERROR: 未知 CMD_VEL_MODE '$CMD_VEL_MODE'（continuous/burst/none）"; exit 1 ;;
+esac
+if [ "$CMD_VEL_DUR" -gt 0 ]; then
+  ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: $CMD_VX, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}" >/dev/null 2>&1 &
+  CMDVEL_PID=$!
+  if [ "$CMD_VEL_MODE" = "burst" ]; then
+    ( sleep "$CMD_VEL_DUR"; kill "$CMDVEL_PID" 2>/dev/null ) &
+  fi
+fi
+echo "[run] cmd_vx=$CMD_VX mode=$CMD_VEL_MODE for ${DURATION}s"
 
 # 7) 保持实验窗口（录包已在 2.4 启动）
 sleep "$REC_SECS"
@@ -91,7 +121,7 @@ for i in $(seq 1 20); do
   sleep 1
 done
 kill -9 $BAG_PID 2>/dev/null
-kill $CMDVEL_PID 2>/dev/null
+[ -n "$CMDVEL_PID" ] && kill $CMDVEL_PID 2>/dev/null
 
 # 8) 收尾：停输出、恢复暂停（先杀持续使能的发布者再关）
 kill $HWSW_PID 2>/dev/null
@@ -103,6 +133,11 @@ cat > "$OUT/params.txt" <<EOF
 name=$NAME
 gait=$GAIT
 cmd_vx=$CMD_VX
+cmd_vel_mode=$CMD_VEL_MODE
+pre_unpause_wait_s=$PRE_UNPAUSE_WAIT
+launch_teleop=$LAUNCH_TELEOP
+launch_rviz=$LAUNCH_RVIZ
+launch_render=$LAUNCH_RENDER
 duration_s=$DURATION
 record_s=$REC_SECS
 date=$(date -Iseconds)

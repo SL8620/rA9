@@ -33,7 +33,7 @@ ros2 bag record -o "$OUT/bag" \
   /humanoid/desiredFeetTrajectory/LHEEL /humanoid/desiredFeetTrajectory/RHEEL \
   /ground_truth/state /jointsPosVel /imu /pauseFlag /simContactFlag /cmd_contactFlag \
   /targetTorque /targetPos /targetVel /targetKp /targetKd /realTorque /foot_vel_estimate \
-  /mpc_solve_time_ms /wbc_solve_time_ms /cmd_vel \
+  /mpc_solve_time_ms /wbc_solve_time_ms /cmd_vel /hwswitch /pauseCmd \
   > "$OUT/bag_record.log" 2>&1 &
 BAG_PID=$!
 
