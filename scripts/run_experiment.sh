@@ -57,7 +57,7 @@ ros2 bag record -o "$OUT/bag" \
   /humanoid/desiredFeetTrajectory/LHEEL /humanoid/desiredFeetTrajectory/RHEEL \
   /ground_truth/state /jointsPosVel /imu /pauseFlag /simContactFlag /cmd_contactFlag \
   /targetTorque /targetPos /targetVel /targetKp /targetKd /realTorque /foot_vel_estimate \
-  /mpc_solve_time_ms /wbc_solve_time_ms /cmd_vel /hwswitch /pauseCmd /sim_time \
+  /mpc_solve_time_ms /wbc_solve_time_ms /cmd_vel /hwswitch /pauseCmd /sim_time /sim_push_fired \
   > "$OUT/bag_record.log" 2>&1 &
 BAG_PID=$!
 
@@ -172,13 +172,15 @@ if [ -n "${PUSH_IMPULSE:-}" ]; then
     FX=$F_MAG; FY=0.0; FZ=0.0
     MX=0.0; MY=$(awk "BEGIN{printf \"%.3f\", $PUSH_R_Z * $F_MAG}"); MZ=0.0
   fi
-  SIM_T=$(timeout 3 ros2 topic echo /sim_time --once 2>/dev/null | awk '/^data:/{print $2}')
-  TRIG=$(awk "BEGIN{printf \"%.3f\", ${SIM_T:-0} + $PUSH_DELAY_S}")
-  echo "[run] push: dir=$PUSH_DIR impulse=$PUSH_IMPULSE N·s F=$F_MAG N dur=${PUSH_DURATION_MS}ms trigger_sim=$TRIG"
-  timeout 3 ros2 topic pub -r 10 /sim_push std_msgs/msg/Float32MultiArray \
+  # 触发=−1 即收即发：timing 不靠发布端猜（ros2 echo/pub 各自都要 ~4s DDS 发现，
+  # timeout 短了必挂——2026-10-09 教训：trigger 兜底 3.0 + pub 未连上 → 推力未送达）。
+  # 实际施力时刻由 sim 发 /sim_push_fired 回执，analyze_push 以回执为准。
+  TRIG=-1
+  echo "[run] push: dir=$PUSH_DIR impulse=$PUSH_IMPULSE N·s F=$F_MAG N dur=${PUSH_DURATION_MS}ms trigger=immediate"
+  timeout 15 ros2 topic pub -r 10 /sim_push std_msgs/msg/Float32MultiArray \
     "{data: [$FX, $FY, $FZ, $MX, $MY, $MZ, $PUSH_DURATION_MS, $TRIG]}" >/dev/null 2>&1 &
   PUSH_PUB_PID=$!
-  PUSH_STATUS="dir=$PUSH_DIR impulse=$PUSH_IMPULSE N.s duration_ms=$PUSH_DURATION_MS r_z=$PUSH_R_Z trigger_sim=$TRIG force_N=$F_MAG"
+  PUSH_STATUS="dir=$PUSH_DIR impulse=$PUSH_IMPULSE N.s duration_ms=$PUSH_DURATION_MS r_z=$PUSH_R_Z trigger=immediate force_N=$F_MAG"
 fi
 
 # 7) 保持实验窗口（录包已在 2.4 启动）

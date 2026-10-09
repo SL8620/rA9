@@ -37,7 +37,7 @@ from rosidl_runtime_py.utilities import get_message
 
 WANT = {"/ground_truth/state", "/sim_time", "/realTorque", "/targetTorque",
         "/mpc_solve_time_ms", "/wbc_solve_time_ms", "/simContactFlag",
-        "/foot_vel_estimate"}
+        "/foot_vel_estimate", "/sim_push_fired"}
 
 
 def load(bag_dir):
@@ -86,21 +86,30 @@ def main():
     data = load(os.path.join(run, "bag"))
     problems = []
 
-    # ---- 注入时刻（sim 时间 → 墙钟）----
-    push_trig_sim = float(params.get("push_time_sim_trigger", "nan").split()[0])
+    # ---- 注入时刻：以 sim 的 /sim_push_fired 回执为准（实际施力时刻），
+    # 无回执才退回 params 的 trigger_sim 插值（旧 run 兼容）----
+    push_trig_sim = float(params.get("push_time_sim_trigger", "nan").split()[0]
+                          if params.get("push_time_sim_trigger") else "nan")
+    fired = data["/sim_push_fired"]
     st = data["/sim_time"]
-    if not st:
-        problems.append("缺 /sim_time（无法定位注入时刻）")
-        summary = "STATUS: INVALID(" + "; ".join(problems) + ")\n"
-        open(os.path.join(out_dir, "push_summary.txt"), "w").write(summary)
-        print(summary)
-        sys.exit(1)
-    stt = np.array([t for t, _ in st])
-    stv = np.array([m.data for _, m in st])
-    if math.isfinite(push_trig_sim):
+    if fired:
+        t_push_wall = float(fired[0][0])
+        t_src = f"sim_push_fired回执(sim={fired[0][1].data:.3f})"
+    elif math.isfinite(push_trig_sim):
+        if not st:
+            problems.append("缺 /sim_time（无法定位注入时刻）")
+            summary = "STATUS: INVALID(" + "; ".join(problems) + ")\n"
+            open(os.path.join(out_dir, "push_summary.txt"), "w").write(summary)
+            print(summary)
+            sys.exit(1)
+        stt = np.array([t for t, _ in st])
+        stv = np.array([m.data for _, m in st])
         t_push_wall = float(np.interp(push_trig_sim, stv, stt))
+        t_src = f"params trigger_sim={push_trig_sim:.3f} 插值(旧口径)"
     else:
-        t_push_wall = float(stt[0])
+        problems.append("无 /sim_push_fired 回执且 params 无 trigger（注入时刻不可考）")
+        t_push_wall = float(st[0][0]) if st else 0.0
+        t_src = "未知(回退 0)"
 
     # ---- 状态量 ----
     gt = data["/ground_truth/state"]
@@ -150,6 +159,14 @@ def main():
     t_rec = t_rec_for(a.eps, a.eps_pos, a.thold)
     t_rec_half = t_rec_for(a.eps * 0.5, a.eps_pos * 0.5, a.thold)
     t_rec_dbl = t_rec_for(a.eps * 2, a.eps_pos * 2, a.thold)
+    # 姿态单指标（补充）：trot/walk 的步态重定位会让位置偏移持久存在，
+    # ε_pos=0.02m 对行走工况天然不满足；姿态口径不受此影响
+    t_rec_att = t_rec_for(a.eps, 1e9, a.thold)
+
+    # 注入无响应 = 推力未送达（DDS 竞态丢消息），不是抗扰结果
+    if np.isfinite(dphi_max) and np.isfinite(dy_max) and \
+       dphi_max < 0.002 and dy_max < 0.005:
+        problems.insert(0, "注入疑似未生效（无姿态/位置响应，推力未送达）")
 
     # ---- 倒地判定（复用 analyze_walk 口径：姿态>45° 或高度<0.75×基线）----
     h_nom = float(np.median(pz[pre])) if pre.any() else float(np.median(pz))
@@ -213,14 +230,15 @@ def main():
         f"STATUS: {status}",
         f"push: dir={push_dir} impulse={imp} N.s state={state} "
         f"duration_ms={params.get('push_duration_ms','?')} "
-        f"time_sim={push_trig_sim:.3f} (wall t0={t_push_wall - gt_t[0]:.2f}s)",
+        f"[{t_src}] (wall t0={t_push_wall - gt_t[0]:.2f}s)",
         f"dphi_max={dphi_max:.4f} rad, dtheta_max={dth_max:.4f} rad, "
         f"dy_max={dy_max:.4f} m, t_rec={t_rec:.2f} s"
         if np.isfinite(t_rec) else
         f"dphi_max={dphi_max:.4f} rad, dtheta_max={dth_max:.4f} rad, "
         f"dy_max={dy_max:.4f} m, t_rec=NA({'FALLEN' if fallen else 'NOT_RECOVERED'})",
         f"t_rec sensitivity: eps*0.5 -> {t_rec_half if np.isfinite(t_rec_half) else 'NA'} s, "
-        f"eps*2 -> {t_rec_dbl if np.isfinite(t_rec_dbl) else 'NA'} s (thold={a.thold}s)",
+        f"eps*2 -> {t_rec_dbl if np.isfinite(t_rec_dbl) else 'NA'} s (thold={a.thold}s); "
+        f"t_rec_att(仅姿态 eps) -> {t_rec_att if np.isfinite(t_rec_att) else 'NA'} s",
         f"hiproll_tau_peak={hip_peak:.2f} Nm (table2.4: need 143.89, peak 220)",
         ("solve_time_push: mpc mean/p99/max="
          + "/".join(f"{mpc_st[k]:.2f}" for k in ("mean", "p99", "max"))

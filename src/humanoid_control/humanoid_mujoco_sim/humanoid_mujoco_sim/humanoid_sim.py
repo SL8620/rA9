@@ -62,6 +62,7 @@ class HumanoidSim(MuJoCoBase):
     self.push_dur_s = 0.0
     self.push_trigger = -2.0              # 未设置；-1=收到即施
     self.node.create_subscription(Float32MultiArray, "/sim_push", self.pushCallback, 2)
+    self.pubPushFired = self.node.create_publisher(Float64, '/sim_push_fired', 2)
     # 缓存上一步接触状态，供 500Hz 发布分支复用（在 1kHz step 中更新）
     self.contactFlag = Int8MultiArray()
     self.contactFlag.data = array.array('b', [0, 0, 0, 0])
@@ -236,6 +237,10 @@ class HumanoidSim(MuJoCoBase):
              (self.push_trigger < 0.0 or self.data.time >= self.push_trigger):
             self.push_left_s = self.push_dur_s
             self.push_dur_s = 0.0         # 已触发，防止再次启动
+            # 回执：实际施力时刻（仿真时间）。时机以此为准，不信发布端的猜测
+            firedMsg = Float64()
+            firedMsg.data = self.data.time
+            self.pubPushFired.publish(firedMsg)
           if self.push_left_s > 0.0:
             self.data.xfrc_applied[self.push_body_id] = self.push_wrench
             self.push_left_s -= self.model.opt.timestep
