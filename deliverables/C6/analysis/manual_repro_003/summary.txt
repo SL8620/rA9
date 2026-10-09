@@ -1,0 +1,21 @@
+STATUS: VALID
+bag: experiments/manual_repro_003/bag
+cmd_vx: 0.0 m/s
+RTF: 0.889（1.0=实时；<0.5 判仿真冻结；实机 bag 无 /simContactFlag 为 nan）
+steady window: [204.72, 523.69] s  (band=0.050 m/s, dwell=0.3s)
+unpaused: [204.72, 523.69] s, paused_fraction = 0.391
+
+[1] base tracking: vx = 0.000 ± 0.015 m/s (RMSE 0.015), height = 0.861 ± 0.012 m
+
+[2] contact timing:
+    compare span: [204.72, 523.68] s (规划/实测时间跨度交集；超出不外推)
+  L: duty 0.73->0.73, agree 98.2%, switch_err 14.3 ms, switches 385/457
+  R: duty 0.73->0.73, agree 98.2%, switch_err 14.1 ms, switches 386/522
+    per-point duty actual: LTOE=0.73  RTOE=0.73  LHEEL=0.73  RHEEL=0.73
+
+[3] torque tracking: rms 6.93 Nm, max 395.3 Nm
+    joint pos: rms 0.0072 rad, max 0.277 rad
+
+[4] solve time:
+  MPC: mean 2.74 ms, p95 3.18, p99 3.46, max 5.89 | budget 10 ms, over 0.00%
+  WBC: mean 0.21 ms, p95 0.32, p99 0.35, max 1.64 | budget 2 ms, over 0.00%

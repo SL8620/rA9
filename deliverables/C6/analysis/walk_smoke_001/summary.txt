@@ -1,0 +1,21 @@
+STATUS: INVALID(无 /mpc_solve_time_ms（旧 bag 未埋点）)
+bag: experiments/walk_smoke_001
+cmd_vx: 0.3 m/s
+RTF: 0.818（1.0=实时；<0.5 判仿真冻结；实机 bag 无 /simContactFlag 为 nan）
+steady window: [0.01, 58.62] s  (未稳定进入目标带(band=0.090)，自指令起算)
+unpaused: [0.01, 58.62] s, paused_fraction = 0.000
+
+[1] base tracking: vx = -0.000 ± 0.021 m/s (RMSE 0.301), height = 0.862 ± 0.005 m
+
+[2] contact timing:
+    compare span: [0.01, 58.62] s (规划/实测时间跨度交集；超出不外推)
+  L: duty 0.50->0.50, agree 96.7%, switch_err 14.3 ms, switches 131/141
+  R: duty 0.50->0.50, agree 96.7%, switch_err 13.9 ms, switches 131/167
+    per-point duty actual: LTOE=0.50  RTOE=0.50  LHEEL=0.50  RHEEL=0.50
+
+[3] torque tracking: rms 9.60 Nm, max 360.4 Nm
+    joint pos: rms 0.0095 rad, max 0.286 rad
+
+[4] solve time:
+  MPC: (no data — 旧 bag 无求解耗时话题，需重录)
+  WBC: (no data — 旧 bag 无求解耗时话题，需重录)
