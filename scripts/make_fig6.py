@@ -505,13 +505,20 @@ def fig1():
         for v in ("v00", "v01", "v03"):
             runs = groups[v]
             vxs, hs = [], []
+            sys.path.insert(0, os.path.join(RA9, "scripts"))
+            from zc_lib import com_height
             for n in runs:
                 d = load_run(n)
                 m, t0 = steady_slice(d, CMD[v])
                 gt = d["ground_truth_state"]
                 t = gt[:, 0] - t0
                 vxs.append(np.interp(grid, t, gt[:, 4], left=np.nan, right=np.nan))
-                hs.append(np.interp(grid, t, gt[:, 3], left=np.nan, right=np.nan))
+                jv = d["jointsPosVel"]
+                ij = np.clip(np.searchsorted(jv[:, 0], gt[:, 0]), 1, len(jv) - 1)
+                lf = np.abs(gt[:, 0] - jv[ij - 1, 0]) <= np.abs(gt[:, 0] - jv[ij, 0])
+                joints = jv[np.where(lf, ij - 1, ij), 1:13]
+                zc = com_height(gt[:, 3], gt[:, 5], gt[:, 6], joints)
+                hs.append(np.interp(grid, t, zc, left=np.nan, right=np.nan))
             vxs, hs = np.array(vxs), np.array(hs)
             mu, sd = np.nanmean(vxs, 0), np.nanstd(vxs, 0)
             axes[0, col].plot(grid, mu, color=colors3[v], lw=1.1,
@@ -520,7 +527,7 @@ def fig1():
             axes[0, col].axhline(CMD[v], color=GREY, ls="--", lw=.7)
             mh, sh = np.nanmean(hs, 0), np.nanstd(hs, 0)
             axes[1, col].plot(grid, mh, color=colors3[v], lw=1.1,
-                              label=f"vx={CMD[v]:.1f}: {np.nanmean(mh):.3f}±{np.nanmean(sh):.3f} m")
+                              label=f"vx={CMD[v]:.1f}: {np.nanmean(mh):.3f}±{np.nanmean(sh):.4f} m")
             axes[1, col].fill_between(grid, mh-sh, mh+sh, color=colors3[v], alpha=.15, lw=0)
         axes[0, col].set_title(f"({chr(97+col)}) {title}", fontsize=9.5, loc="left")
         axes[0, col].set_ylabel("vx [m/s]", fontsize=9)

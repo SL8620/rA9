@@ -19,7 +19,8 @@ lines = ["# C6 回填底稿（A1/A2 聚合统计）", "",
          "统计窗=各 run 稳态窗；数值取 3 个有效 run 的均值（±run 间 std）。", ""]
 lines += ["## 6.4.1 基座跟踪（A1，三速度 × 3 run）", "",
           "| 指标 | v00 (0.0) | v01 (0.1) | v03 (0.3) |", "|---|---|---|---|"]
-rows = {"vx_mean": [], "vx_std": [], "vx_rmse": [], "height_mean": [], "height_std": []}
+rows = {"vx_mean": [], "vx_std": [], "vx_rmse": [], "height_mean": [], "height_std": [],
+        "zc_mean": [], "zc_std": []}
 for v, names in mf6.RUNS.items():
     stat = {k: [] for k in rows}
     for n in names:
@@ -31,7 +32,10 @@ for v, names in mf6.RUNS.items():
     for k in rows:
         rows[k].append(np.mean(stat[k]) if stat[k] else float("nan"))
 for k, label, n in (("vx_mean", "vx mean [m/s]", 3), ("vx_std", "vx std [m/s]", 3),
-                    ("vx_rmse", "vx RMSE [m/s]", 3), ("height_mean", "基座高 mean [m]", 3),
+                    ("vx_rmse", "vx RMSE [m/s]", 3),
+                    ("zc_mean", "z_c 质心高 mean [m]（MuJoCo正解）", 3),
+                    ("zc_std", "z_c 质心高 std [m]", 4),
+                    ("height_mean", "基座高 mean [m]", 3),
                     ("height_std", "基座高 std [m]", 3)):
     lines.append(f"| {label} | " + " | ".join(f(x, n) for x in rows[k]) + " |")
 
@@ -99,14 +103,18 @@ for cell in ("lat_L1_stand", "lat_L2_stand", "lat_L3_stand", "fwd_L1_stand",
         import re
         def grab(pat):
             m = re.search(pat, txt); return m.group(1) if m else "NA"
-        dp.append(float(grab(r"dphi_max=([0-9.]+)")))
-        dy.append(float(grab(r"dy_max=([0-9.]+)")))
+
+        def fnum(x):
+            try: return float(x)
+            except Exception: return float("nan")
+        dp.append(fnum(grab(r"dphi_max=([0-9.]+)")))
+        dy.append(fnum(grab(r"dy_max=([0-9.]+)")))
         t = grab(r"t_rec=([0-9.]+) ")
         if t == "NA":
             t = grab(r"t_rec=(NA\S*)")
-        tr.append(float(t) if t.replace(".", "").isdigit() else float("nan"))
+        tr.append(fnum(t))
         x = grab(r"t_rec_att\(仅姿态 eps\) -> ([0-9.]+|NA)")
-        tra.append(float(x) if x not in ("NA",) and x.replace(".", "").isdigit() else float("nan"))
+        tra.append(fnum(x))
     n_ = len(dp)
     tr_ok = [x for x in tr if np.isfinite(x)]
     tra_ok = [x for x in tra if np.isfinite(x)]

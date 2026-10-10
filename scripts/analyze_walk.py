@@ -378,6 +378,24 @@ def main():
     if len(vx_w) == 0:
         problems.append("基座状态为空")
 
+    # ---- z_c 质心高度（6.4.1 口径修正 2026-10-10）----
+    # MuJoCo 正解（名义 MJCF）：z_c = 整机质心世界系高度。与 C4 的质心跟踪量
+    # r_c 对齐；注意 r_c 的控制器内部约定与本值有 ~8cm 模型差（见 NOTE）。
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from zc_lib import com_height
+        jv_t, jv_v = data["/jointsPosVel"]
+        if len(gt_t) > 2 and len(jv_t) > 2:
+            idxj = np.clip(np.searchsorted(jv_t, gt_t), 1, len(jv_t) - 1)
+            leftj = np.abs(gt_t - jv_t[idxj - 1]) <= np.abs(gt_t - jv_t[idxj])
+            joints = jv_v[np.where(leftj, idxj - 1, idxj), :12]
+            zc_all = com_height(gt_v[:, 5], gt_v[:, 6], gt_v[:, 7], joints)
+            zc_w = zc_all[m] if (hasattr(m, "__len__") and len(zc_all) == len(m)) else zc_all
+            metrics["zc_mean"] = float(np.nanmean(zc_w)) if len(zc_w) else float("nan")
+            metrics["zc_std"] = float(np.nanstd(zc_w)) if len(zc_w) else float("nan")
+    except Exception as e:
+        print(f"[warn] z_c 计算失败: {e}")
+
     # ---- 2. 接触时序 ----
     contact_rows, cmd_plot, sim_plot, ov_span = contact_metrics(
         data["/cmd_contactFlag"], data["/simContactFlag"], window, (w_lo, w_hi))
@@ -527,7 +545,9 @@ def main():
              f"paused_fraction = {f2(paused_fraction,3)}", "",
              f"[1] base tracking: vx = {f2(metrics['vx_mean'])} ± {f2(metrics['vx_std'])} m/s "
              f"(RMSE {f2(metrics['vx_rmse'])}), height = {f2(metrics['height_mean'])} ± "
-             f"{f2(metrics['height_std'])} m", "",
+             f"{f2(metrics['height_std'])} m",
+             f"    z_c 质心高度（MuJoCo正解，6.4.1口径）: {f2(metrics.get('zc_mean', float('nan')),3)} ± "
+             f"{f2(metrics.get('zc_std', float('nan')),4)} m", "",
              "[2] contact timing:",
              f"    compare span: [{f2(ov_span[0]-t0,2)}, {f2(ov_span[1]-t0,2)}] s "
              f"(规划/实测时间跨度交集；超出不外推)"]
