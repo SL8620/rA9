@@ -20,6 +20,13 @@ if [ -e "$OUT/bag" ]; then
 fi
 mkdir -p "$OUT"
 
+# 启动前清场（2026-10-10 教训）：上一 run 的僵尸 sim 若漏杀，会继续发布
+# /sim_time 等话题，使本 run 的"解暂停验证"误放行 → 全程无步进数据。
+# 与 EXIT trap 同款模式；本脚本一次只跑一个实验，独占合理。
+pkill -9 -f "humanoid_mujoco_sim/humanoid_sim" 2>/dev/null
+pkill -9 -f "cheat_controller_node" 2>/dev/null
+sleep 1
+
 # ROS setup 脚本引用未绑定变量，与 set -u 不兼容，source 期间放开
 set +u
 source /opt/ros/jazzy/setup.bash
@@ -36,12 +43,12 @@ echo "[run] launch flags: teleop:=$LAUNCH_TELEOP rviz:=$LAUNCH_RVIZ render:=$LAU
 ros2 launch humanoid_controllers load_cheat_controller.launch.py \
   teleop:=$LAUNCH_TELEOP rviz:=$LAUNCH_RVIZ render:=$LAUNCH_RENDER > "$OUT/launch.log" 2>&1 &
 LAUNCH_PID=$!
-trap 'kill $LAUNCH_PID 2>/dev/null; sleep 2; pkill -f "cheat_controller_node" 2>/dev/null; pkill -f "humanoid_mujoco_sim/humanoid_sim" 2>/dev/null; pkill -f "humanoid_target_trajectories_publisher" 2>/dev/null; pkill -f "humanoid_gait_command" 2>/dev/null; pkill -f "humanoid_mujoco_sim/teleop" 2>/dev/null; pkill -f rviz2 2>/dev/null' EXIT
+trap 'kill $LAUNCH_PID 2>/dev/null; sleep 2; pkill -f "cheat_controller_node" 2>/dev/null; pkill -f "humanoid_mujoco_sim/humanoid_sim" 2>/dev/null; pkill -f "humanoid_target_trajectories_publisher" 2>/dev/null; pkill -f "humanoid_gait_command" 2>/dev/null; pkill -f "humanoid_mujoco_sim/teleop" 2>/dev/null; pkill -f rviz2 2>/dev/null; if [ -n "${BAG_PID:-}" ]; then kill -TERM $BAG_PID 2>/dev/null; for i in $(seq 1 60); do kill -0 $BAG_PID 2>/dev/null || break; sleep 1; done; kill -9 $BAG_PID 2>/dev/null; fi' EXIT
 
 # 2) 等控制器就绪（MPC 观测流出现 = 初始策略已收到）
 echo "[run] waiting for controller..."
 for i in $(seq 1 60); do
-  if timeout 3 ros2 topic echo /humanoid_mpc_observation --once >/dev/null 2>&1; then
+  if timeout --kill-after=2 10 ros2 topic echo /humanoid_mpc_observation --once >/dev/null 2>&1; then
     echo "[run] controller ready (${i}s)"; break
   fi
   [ "$i" = 60 ] && { echo "[run] ERROR: controller never came up"; exit 1; }
@@ -78,7 +85,7 @@ HWSW_PID=$!
 echo "[run] waiting for enable to take effect (/targetTorque streaming)..."
 ENABLED=0
 for i in $(seq 1 60); do
-  if timeout 2 ros2 topic echo /targetTorque --once >/dev/null 2>&1; then
+  if timeout --kill-after=2 10 ros2 topic echo /targetTorque --once >/dev/null 2>&1; then
     ENABLED=1; echo "[run] enable confirmed after ${i} checks"; break
   fi
 done
@@ -96,7 +103,7 @@ PRE_UNPAUSE_WAIT="${PRE_UNPAUSE_WAIT:-2}"
 #    62 kg），解暂停即坠。manual_repro_003 走通正因 teleop 零速广播重锚过参考
 #    （实测其 τ_ff 全程 190~207 Nm 的站立支撑解）。等待 45s 无效——解是稳定的，
 #    不是收敛时间问题。
-timeout 4 ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}" >/dev/null 2>&1
+timeout --kill-after=2 8 ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}" >/dev/null 2>&1
 sleep "$PRE_UNPAUSE_WAIT"
 
 # 4) 解除仿真暂停（替代手动按 SPACE）——必须**验证**，不能盲发（2026-10-09）。
@@ -106,8 +113,8 @@ sleep "$PRE_UNPAUSE_WAIT"
 echo "[run] unpausing (verified via /sim_time)..."
 UNPAUSED=0
 for i in $(seq 1 30); do
-  timeout 2 ros2 topic pub -r 5 /pauseCmd std_msgs/msg/Bool "data: false" >/dev/null 2>&1
-  if timeout 2 ros2 topic echo /sim_time --once >/dev/null 2>&1; then
+  timeout --kill-after=2 8 ros2 topic pub -r 5 /pauseCmd std_msgs/msg/Bool "data: false" >/dev/null 2>&1
+  if timeout --kill-after=2 10 ros2 topic echo /sim_time --once >/dev/null 2>&1; then
     UNPAUSED=1; echo "[run] sim unpaused (attempt $i)"; break
   fi
 done
@@ -125,8 +132,8 @@ case "$GAIT" in
   quick_trot)  SEQ="[1, 2]";             TIMES="[0.0, 0.3, 0.6]" ;;
   *) echo "[run] ERROR: 未知步态 '$GAIT'（可选 stance/trot/walk/quick_trot）"; exit 1 ;;
 esac
-timeout 3 ros2 topic pub -r 2 /humanoid_gait_mode_schedule std_msgs/msg/String "{data: '$GAIT'}" >/dev/null 2>&1
-timeout 3 ros2 topic pub -r 2 /humanoid_mpc_mode_schedule ocs2_msgs/msg/ModeSchedule "{event_times: $TIMES, mode_sequence: $SEQ}" >/dev/null 2>&1
+timeout --kill-after=2 8 ros2 topic pub -r 2 /humanoid_gait_mode_schedule std_msgs/msg/String "{data: '$GAIT'}" >/dev/null 2>&1
+timeout --kill-after=2 8 ros2 topic pub -r 2 /humanoid_mpc_mode_schedule ocs2_msgs/msg/ModeSchedule "{event_times: $TIMES, mode_sequence: $SEQ}" >/dev/null 2>&1
 echo "[run] gait=$GAIT"
 
 # 6) 发速度指令。
@@ -177,7 +184,7 @@ if [ -n "${PUSH_IMPULSE:-}" ]; then
   # 实际施力时刻由 sim 发 /sim_push_fired 回执，analyze_push 以回执为准。
   TRIG=-1
   echo "[run] push: dir=$PUSH_DIR impulse=$PUSH_IMPULSE N·s F=$F_MAG N dur=${PUSH_DURATION_MS}ms trigger=immediate"
-  timeout 15 ros2 topic pub -r 10 /sim_push std_msgs/msg/Float32MultiArray \
+  timeout --kill-after=2 15 ros2 topic pub -r 10 /sim_push std_msgs/msg/Float32MultiArray \
     "{data: [$FX, $FY, $FZ, $MX, $MY, $MZ, $PUSH_DURATION_MS, $TRIG]}" >/dev/null 2>&1 &
   PUSH_PUB_PID=$!
   PUSH_STATUS="dir=$PUSH_DIR impulse=$PUSH_IMPULSE N.s duration_ms=$PUSH_DURATION_MS r_z=$PUSH_R_Z trigger=immediate force_N=$F_MAG"
@@ -188,7 +195,7 @@ sleep "$REC_SECS"
 # 收尾必须等录包进程写完 metadata.yaml 否则 bag 读不了。
 # 注意：非交互 shell 的后台任务 SIGINT 被忽略（POSIX），必须用 SIGTERM。
 kill -TERM $BAG_PID 2>/dev/null
-for i in $(seq 1 20); do
+for i in $(seq 1 60); do
   kill -0 $BAG_PID 2>/dev/null || break
   sleep 1
 done
@@ -198,8 +205,8 @@ kill -9 $BAG_PID 2>/dev/null
 
 # 8) 收尾：停输出、恢复暂停（先杀持续使能的发布者再关）
 kill $HWSW_PID 2>/dev/null
-timeout 2 ros2 topic pub -r 2 /hwswitch std_msgs/msg/Bool "data: false" >/dev/null 2>&1
-timeout 2 ros2 topic pub -r 2 /pauseCmd std_msgs/msg/Bool "data: true" >/dev/null 2>&1
+timeout --kill-after=2 8 ros2 topic pub -r 2 /hwswitch std_msgs/msg/Bool "data: false" >/dev/null 2>&1
+timeout --kill-after=2 8 ros2 topic pub -r 2 /pauseCmd std_msgs/msg/Bool "data: true" >/dev/null 2>&1
 
 # 9) 记录实验参数（可溯源）
 cat > "$OUT/params.txt" <<EOF
