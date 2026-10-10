@@ -234,14 +234,19 @@ selfCollision
 }
 
 ; Whole body control
+; 力矩界与 C2 表2.4 硬件峰值一致（2026-10-10 校正）：
+;   髋滚转 220、髋俯仰/膝 396、踝俯仰 112（双电机协同）——取值留 10% 保守
+;   踝滚转取同并联踝组模组峰值 112（精确分配校核待 motor-side chain 补齐，
+;   A1 实测该轴用量 ≤51 N·m，界不激活）；髋偏航 C2 未单列，暂 200（实测 ≤109）。
+;   旧值踝两轴 200 超硬件 79%，实测前馈在 200.0 饱和（见 deliverables NOTE §9）。
 torqueLimitsTask
 {
-   (0,0)  200.0     ; motor 1
-   (1,0)  200.0     ; motor 2
-   (2,0)  320.0     ; motor 3
-   (3,0)  320.0     ; motor 4
-   (4,0)  200.0     ; motor 5
-   (5,0)  200.0     ; motor 6
+   (0,0)  200.0     ; Hip_Roll
+   (1,0)  200.0     ; Hip_Yaw
+   (2,0)  320.0     ; Hip_Pitch
+   (3,0)  320.0     ; Knee_Pitch
+   (4,0)  112.0     ; Ankle_Pitch（表2.4 模组峰值 112）
+   (5,0)  112.0     ; Ankle_Roll（同并联踝组峰值，见上）
 }
 
 frictionConeTask

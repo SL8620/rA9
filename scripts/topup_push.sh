@@ -7,12 +7,15 @@ set -u
 RA9_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 N_VALID="${1:-3}"
 MAX_TRY="${2:-6}"
+REP_BASE="${3:-1}"
 declare -A IMP=( [L1]=3.1 [L2]=6.2 [L3]=12.4 )
 
-count_valid() {  # $1=cell前缀
+count_valid() {  # $1=cell前缀；只计 rep>=REP_BASE 的 run（配置变更后批次隔离）
   local n=0
   for d in "$RA9_DIR"/experiments/sim_push_$1_*/; do
     [ -f "$d/analysis/push_summary.txt" ] || continue
+    local rep="${d%/}"; rep="${rep##*_}"
+    [ "$rep" -ge "$REP_BASE" ] 2>/dev/null || continue
     if ! grep -qE "注入疑似未生效|注入前已倒地" "$d/analysis/push_summary.txt"; then
       n=$((n+1))
     fi
@@ -25,8 +28,8 @@ for combo in "lat:stand" "fwd:stand" "lat:walk"; do
   for level in L1 L2 L3; do
     cell="${dir}_${level}_${state}"
     have=$(count_valid "$cell")
-    try=4
-    while [ "$have" -lt "$N_VALID" ] && [ "$try" -lt $((4+MAX_TRY)) ]; do
+    try=$REP_BASE
+    while [ "$have" -lt "$N_VALID" ] && [ "$try" -lt $((REP_BASE+3+MAX_TRY)) ]; do
       rep=$(printf "%02d" "$try")
       name="sim_push_${cell}_${rep}"
       try=$((try+1))
