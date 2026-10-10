@@ -66,12 +66,12 @@ for v, names in mf6.RUNS.items():
         for r in _csv.DictReader(open(os.path.join(RA9, "experiments", n, "analysis", "metrics.csv"))):
             if r["category"] == "torque_tracking" and r["item"] == "rms_total": tr.append(float(r["value"]))
             if r["category"] == "torque_tracking" and r["item"] == "max_abs": tm.append(float(r["value"]))
-            if r["category"] == "joint_tracking" and r["item"] == "rms_total": qr.append(float(r["value"]))
-            if r["category"] == "joint_tracking" and r["item"] == "max_abs": qm.append(float(r["value"]))
+            if r["category"] == "joint_tracking" and r["item"] == "rms_total_excl": qr.append(float(r["value"]))
+            if r["category"] == "joint_tracking" and r["item"] == "max_abs_excl": qm.append(float(r["value"]))
     t_rms.append(np.mean(tr)); t_max.append(np.max(tm))
     q_rms.append(np.mean(qr)); q_max.append(np.max(qm))
 for label, arr, n in (("力矩误差 RMS [N·m]", t_rms, 2), ("力矩误差 max [N·m]", t_max, 1),
-                      ("关节角误差 RMS [rad]", q_rms, 4), ("关节角误差 max [rad]", q_max, 3)):
+                      ("关节角误差 RMS [rad]（剔除瞬态窗）", q_rms, 4), ("关节角误差 max [rad]（剔除瞬态窗）", q_max, 3)):
     lines.append(f"| {label} | " + " | ".join(f(x, n) for x in arr) + " |")
 
 lines += ["", "## 6.4.4 求解耗时（A1 全部 9 run 聚合）", ""]

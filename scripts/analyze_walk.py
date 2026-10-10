@@ -388,6 +388,27 @@ def main():
     # ---- 3. 力矩/关节跟踪 ----
     tau = track_metrics(data["/targetTorque"], data["/realTorque"], window, 12)
     q = track_metrics(data["/targetPos"], data["/jointsPosVel"], window, 12)
+
+    # ---- 瞬态垃圾窗检测与剔除（2026-10-10 评审）----
+    # 控制器 /targetPos 存在 ~12ms 垃圾窗（自发故障同族轻量版）：相邻采样跳变
+    # >0.15 rad（>75 rad/s，真实轨迹不可达）即判瞬态，±0.1s 掩蔽后重算指标。
+    # 主报剔除值，原始值与 glitch 统计一并落盘（不静默改数）。
+    q_excl, glitch_n, glitch_ms = q, 0, 0.0
+    tp_t, tp_v = data["/targetPos"]
+    if len(tp_t) > 2:
+        jump = np.abs(np.diff(tp_v[:, :12], axis=0)).max(axis=1) > 0.15
+        idx = np.flatnonzero(jump)
+        if len(idx):
+            # 簇计数：间隔 >0.2s 算独立垃圾窗
+            glitch_n = int(1 + np.sum(np.diff(idx) > 100))
+            mask = np.zeros(len(tp_t), dtype=bool)
+            for i in idx:
+                mask |= (np.abs(tp_t - tp_t[i]) <= 0.1)
+            glitch_ms = 1000.0 * float(mask.mean() * (tp_t[-1] - tp_t[0]))
+            q2 = track_metrics((tp_t[~mask], tp_v[~mask]),
+                               data["/jointsPosVel"], window, 12)
+            if q2:
+                q_excl = q2
     if tau is None:
         problems.append("力矩话题为空（/realTorque 只在仿真非暂停时发布）")
     if q is None:
@@ -482,6 +503,10 @@ def main():
             for i in range(len(q["rms_per"])):
                 w.writerow(["joint_tracking", f"joint{i}.rms", float(q["rms_per"][i])])
                 w.writerow(["joint_tracking", f"joint{i}.max", float(q["max_per"][i])])
+            w.writerow(["joint_tracking", "rms_total_excl", float(q_excl["rms_total"])])
+            w.writerow(["joint_tracking", "max_abs_excl", float(q_excl["max_abs"])])
+            w.writerow(["joint_tracking", "glitch_count", glitch_n])
+            w.writerow(["joint_tracking", "glitch_ms", glitch_ms])
             w.writerow(["joint_tracking", "rms_total", q["rms_total"]])
             w.writerow(["joint_tracking", "max_abs", q["max_abs"]])
         for name, st in (("mpc", mpc_stats), ("wbc", wbc_stats)):
@@ -517,7 +542,10 @@ def main():
               f"[3] torque tracking: rms {f2(tau['rms_total'],2) if tau else 'nan'} Nm, "
               f"max {f2(tau['max_abs'],1) if tau else 'nan'} Nm",
               f"    joint pos: rms {f2(q['rms_total'],4) if q else 'nan'} rad, "
-              f"max {f2(q['max_abs'],3) if q else 'nan'} rad", "",
+              f"max {f2(q['max_abs'],3) if q else 'nan'} rad",
+              f"    剔除瞬态垃圾窗后: rms {f2(q_excl['rms_total'],4) if q_excl else 'nan'} rad, "
+              f"max {f2(q_excl['max_abs'],3) if q_excl else 'nan'} rad"
+              f"（垃圾窗 {glitch_n} 次共 {f2(glitch_ms,1)} ms，报告口径用此行）", "",
               "[4] solve time:"]
     for name, st, budget in (("MPC", mpc_stats, MPC_BUDGET_MS), ("WBC", wbc_stats, WBC_BUDGET_MS)):
         if st:
