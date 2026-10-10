@@ -199,3 +199,22 @@ RMS 0.007~0.010 rad、max 0.12~0.16 rad；速度跟踪 RMSE 0.007~0.039 m/s；
 - 正典（原始界 200/200/320）：A1 `sim_base_*_0x`、A2 `sim_push_*_01~09`
   及 walk_smoke_001/manual_repro_003 —— 论文引用只用这批
 - 探索批（临时界 112，`*_1x`/`*_11+`）：仅作 §9 勘验依据，不进论文数据
+
+## 10. 采集前置检查（2026-10-10 血泪教训，已固化为流程）
+
+**症状**：合成占位批次"六连倒"、零扰动对照也倒——一度误判为"模型失配致
+±1% 质量即失稳"。**真因**：孤儿进程累积拖垮 CPU（load 65~76）→ RTF
+1.000→0.84 → defaultJointState 过渡振荡（膝目标 0.9→1.8→0.55 发散）→ 一致倒地。
+
+**泄漏源三类**（全部已回收固化进 run_experiment.sh 清场/trap）：
+1. `robot_state_publisher` 不在清理名单，每 run 漏 1 个（现场 5 个×6% CPU）
+2. `ros2 topic pub/echo` 的 python 孙进程（timeout 杀父不杀孙）
+3. 中止路径的 recorder（trap 无 flush 收尾）
+
+**收数前置检查（每次采集前必须过）**：
+- [ ] `uptime` 1min 负载 < 5（20 核机）
+- [ ] `pgrep -c "robot_state_publisher|ros2 topic|humanoid_sim"` ≈ 当前 run 数
+- [ ] 冒烟 run 的 RTF（跨度法）≥ 0.98
+
+**修复后复验**：零扰动对照 STATUS: VALID、RTF=1.000；扰动批次六连 VALID
+（质量±5%/惯量±10%/质心±5mm 下行走稳定 → 控制器参数鲁棒性成立）。

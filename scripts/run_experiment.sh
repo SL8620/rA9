@@ -25,6 +25,8 @@ mkdir -p "$OUT"
 # 与 EXIT trap 同款模式；本脚本一次只跑一个实验，独占合理。
 pkill -9 -f "humanoid_mujoco_sim/humanoid_sim" 2>/dev/null
 pkill -9 -f "cheat_controller_node" 2>/dev/null
+pkill -9 -f "ros2 topic" 2>/dev/null   # timeout 杀父后 python 孙进程成孤儿，空转烧 CPU
+pkill -9 -f "robot_state_publisher" 2>/dev/null  # 每 run 漏一个，累积拖慢 RTF
 sleep 1
 
 # ROS setup 脚本引用未绑定变量，与 set -u 不兼容，source 期间放开
@@ -43,7 +45,7 @@ echo "[run] launch flags: teleop:=$LAUNCH_TELEOP rviz:=$LAUNCH_RVIZ render:=$LAU
 ros2 launch humanoid_controllers load_cheat_controller.launch.py \
   teleop:=$LAUNCH_TELEOP rviz:=$LAUNCH_RVIZ render:=$LAUNCH_RENDER > "$OUT/launch.log" 2>&1 &
 LAUNCH_PID=$!
-trap 'kill $LAUNCH_PID 2>/dev/null; sleep 2; pkill -f "cheat_controller_node" 2>/dev/null; pkill -f "humanoid_mujoco_sim/humanoid_sim" 2>/dev/null; pkill -f "humanoid_target_trajectories_publisher" 2>/dev/null; pkill -f "humanoid_gait_command" 2>/dev/null; pkill -f "humanoid_mujoco_sim/teleop" 2>/dev/null; pkill -f rviz2 2>/dev/null; if [ -n "${BAG_PID:-}" ]; then kill -TERM $BAG_PID 2>/dev/null; for i in $(seq 1 60); do kill -0 $BAG_PID 2>/dev/null || break; sleep 1; done; kill -9 $BAG_PID 2>/dev/null; fi' EXIT
+trap 'kill $LAUNCH_PID 2>/dev/null; sleep 2; pkill -f "cheat_controller_node" 2>/dev/null; pkill -f "humanoid_mujoco_sim/humanoid_sim" 2>/dev/null; pkill -f "humanoid_target_trajectories_publisher" 2>/dev/null; pkill -f "humanoid_gait_command" 2>/dev/null; pkill -f "humanoid_mujoco_sim/teleop" 2>/dev/null; pkill -f rviz2 2>/dev/null; pkill -9 -f "ros2 topic" 2>/dev/null; pkill -9 -f "robot_state_publisher" 2>/dev/null; if [ -n "${BAG_PID:-}" ]; then kill -TERM $BAG_PID 2>/dev/null; for i in $(seq 1 60); do kill -0 $BAG_PID 2>/dev/null || break; sleep 1; done; kill -9 $BAG_PID 2>/dev/null; fi' EXIT
 
 # 2) 等控制器就绪（MPC 观测流出现 = 初始策略已收到）
 echo "[run] waiting for controller..."

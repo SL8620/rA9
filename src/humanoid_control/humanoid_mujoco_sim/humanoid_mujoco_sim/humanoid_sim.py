@@ -1,5 +1,6 @@
 import mujoco as mj
 import numpy as np
+import os
 from .mujoco_base import MuJoCoBase
 from mujoco.glfw import glfw
 import rclpy
@@ -420,6 +421,9 @@ def main():
     rclpy.init()
     hector_desc_path = get_prefix_path('humanoid_legged_description')
     xml_path = hector_desc_path + "/share/humanoid_legged_description/mjcf/humanoid_legged_control_.xml"
+    # MJCXML_PATH 覆盖：sim-to-real 模型失配实验（质量/惯量/质心扰动植物模型，
+    # 控制器仍用名义 URDF）。见 scripts/gen_perturbed_mjcf.py
+    xml_path = os.environ.get("MJCXML_PATH", xml_path)
 
 
     sim = HumanoidSim(xml_path)#创建仿真节点
