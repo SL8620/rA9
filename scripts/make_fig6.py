@@ -96,7 +96,7 @@ def load_run(name):
 
 def steady_slice(d, cmd, band=None):
     """稳态窗：解暂停后进入目标带（vx）并保持 0.3s；返回布尔掩码（对 gt 行）。"""
-    gt = d["ground_truth/state"]
+    gt = d["ground_truth_state"]
     rt = d["realTorque"]
     t0 = rt[0, 0] if len(rt) else gt[0, 0]
     t = gt[:, 0]
@@ -481,3 +481,137 @@ if __name__ == "__main__":
         fig5("stand", "lat")
         fig5("stand", "fwd")
         fig5("walk", "lat")
+
+
+# ---------------------------------------------------------- fig6_1 / fig6_6
+SYNTH = {
+    "v00": ["synth_real_stand_01", "synth_real_stand_02"],
+    "v01": ["synth_real_walk_v01_01", "synth_real_walk_v01_02"],
+    "v03": ["synth_real_walk_v03_01", "synth_real_walk_v03_02"],
+}
+SYNTH_TAG = "（右栏为合成占位数据，待真机替换）"
+
+
+def fig1():
+    """fig6_1 基座跟踪：左=仿真三档，右=合成占位"实机"同式。"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    plt.rcParams["font.family"] = FONT
+    plt.rcParams["axes.unicode_minus"] = False
+    fig, axes = plt.subplots(2, 2, figsize=(6.8, 3.2), sharex=False)
+    for col, (title, groups) in enumerate((("仿真", RUNS), ("合成占位" + SYNTH_TAG, SYNTH))):
+        grid = np.arange(0, 15, 0.01)
+        for v in ("v00", "v01", "v03"):
+            runs = groups[v]
+            vxs, hs = [], []
+            for n in runs:
+                d = load_run(n)
+                m, t0 = steady_slice(d, CMD[v])
+                gt = d["ground_truth_state"]
+                t = gt[:, 0] - t0
+                vxs.append(np.interp(grid, t, gt[:, 4], left=np.nan, right=np.nan))
+                hs.append(np.interp(grid, t, gt[:, 3], left=np.nan, right=np.nan))
+            vxs, hs = np.array(vxs), np.array(hs)
+            mu, sd = np.nanmean(vxs, 0), np.nanstd(vxs, 0)
+            axes[0, col].plot(grid, mu, color=colors3[v], lw=1.1,
+                              label=f"vx={CMD[v]:.1f}: {np.nanmean(mu):.3f}±{np.nanmean(sd):.3f}")
+            axes[0, col].fill_between(grid, mu-sd, mu+sd, color=colors3[v], alpha=.15, lw=0)
+            axes[0, col].axhline(CMD[v], color=GREY, ls="--", lw=.7)
+            mh, sh = np.nanmean(hs, 0), np.nanstd(hs, 0)
+            axes[1, col].plot(grid, mh, color=colors3[v], lw=1.1,
+                              label=f"vx={CMD[v]:.1f}: {np.nanmean(mh):.3f}±{np.nanmean(sh):.3f} m")
+            axes[1, col].fill_between(grid, mh-sh, mh+sh, color=colors3[v], alpha=.15, lw=0)
+        axes[0, col].set_title(f"({chr(97+col)}) {title}", fontsize=9.5, loc="left")
+        axes[0, col].set_ylabel("vx [m/s]", fontsize=9)
+        axes[1, col].set_ylabel("基座高度 [m]", fontsize=9)   # z 口径待决，暂基座高度
+        axes[1, col].set_xlabel("稳态窗时间 [s]", fontsize=9)
+        for r in (0, 1):
+            axes[r, col].legend(fontsize=6.5, frameon=False)
+            axes[r, col].grid(alpha=.25)
+            axes[r, col].tick_params(colors=GREY, labelsize=8)
+    fig.tight_layout()
+    for ext in ("png", "svg"):
+        fig.savefig(os.path.join(OUT, f"fig6_1_base_tracking.{ext}"),
+                    dpi=300 if ext == "png" else None)
+    plt.close(fig)
+    print("fig6_1 done（右栏合成占位）->", OUT)
+
+
+def fig6():
+    """fig6_6 sim2real（real=合成占位）：四组指标双柱对比。"""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    plt.rcParams["font.family"] = FONT
+    plt.rcParams["axes.unicode_minus"] = False
+
+    def agg(names):
+        zc, trms, ag, vx = [], [], [], []
+        for n in names:
+            import csv as _csv
+            rows = {r["item"]: r["value"] for r in
+                    _csv.DictReader(open(os.path.join(RA9, "experiments", n,
+                                                      "analysis", "metrics.csv")))
+                    if r["category"] == "base_tracking"}
+            zc.append(float(rows.get("height_std", "nan")))
+            vx.append(abs(float(rows.get("vx_mean", "nan"))))
+            tg = [float(r["value"]) for r in
+                  _csv.DictReader(open(os.path.join(RA9, "experiments", n,
+                                                    "analysis", "metrics.csv")))
+                  if r["category"] == "torque_tracking" and r["item"] == "rms_total"]
+            ag = ag + [float(r["value"]) for r in
+                       _csv.DictReader(open(os.path.join(RA9, "experiments", n,
+                                                         "analysis", "metrics.csv")))
+                       if r["item"].endswith(".agree_pct")]
+            trms += tg
+        return dict(zc=np.nanmean(zc), tau=np.nanmean(trms),
+                    agree=np.nanmean(ag), vx=np.nanmean(vx))
+
+    sim = agg(RUNS["v01"] + RUNS["v03"])
+    syn = agg(SYNTH["v01"] + SYNTH["v03"])
+    keys = [("基座高 std [m]", "zc", 1), ("力矩误差 RMS [N·m]", "tau", 1),
+            ("接触 agree [%]", "agree", 1), ("|vx| 均值 [m/s]", "vx", 3)]
+    fig, ax = plt.subplots(figsize=(6.8, 2.8))
+    xs = np.arange(len(keys))
+    w = .35
+    b1 = ax.bar(xs - w/2, [sim[k] for _, k, _ in keys], w, color=BLUE, label="仿真（真实验数据）")
+    b2 = ax.bar(xs + w/2, [syn[k] for _, k, _ in keys], w, color="#9aa0a6",
+                label="合成占位（非真机，待替换）")
+    for bars, vals in ((b1, [sim[k] for _, k, _ in keys]),
+                       (b2, [syn[k] for _, k, _ in keys])):
+        for bb, vv, (_, _, nd) in zip(bars, vals, keys):
+            ax.annotate(f"{vv:.{nd}f}", (bb.get_x()+bb.get_width()/2, vv),
+                        textcoords="offset points", xytext=(0, 2),
+                        ha="center", fontsize=7)
+    for i, (_, k, _) in enumerate(keys):
+        if sim[k] != 0:
+            d = 100 * (syn[k] - sim[k]) / abs(sim[k])
+            ax.annotate(f"{d:+.0f}%", (i, max(sim[k], syn[k])),
+                        textcoords="offset points", xytext=(0, 14),
+                        ha="center", fontsize=7.5, color=RED)
+    ax.set_xticks(xs)
+    ax.set_xticklabels([n for n, _, _ in keys], fontsize=8.5)
+    ax.set_ylabel("数值（单位见标签）", fontsize=9)
+    ax.legend(fontsize=7.5, frameon=False)
+    ax.grid(alpha=.25, axis="y")
+    ax.tick_params(colors=GREY, labelsize=8)
+    fig.tight_layout()
+    for ext in ("png", "svg"):
+        fig.savefig(os.path.join(OUT, f"fig6_6_sim2real.{ext}"),
+                    dpi=300 if ext == "png" else None)
+    plt.close(fig)
+    print("fig6_6 done（real=合成占位）->", OUT)
+    print("  sim:", sim)
+    print("  synth:", syn)
+
+
+colors3 = {"v00": BLUE, "v01": GREEN, "v03": RED}
+
+
+if __name__ == "__main__":
+    what = sys.argv[1] if len(sys.argv) > 1 else "all"
+    if what in ("fig1", "all"):
+        fig1()
+    if what in ("fig6", "all"):
+        fig6()
