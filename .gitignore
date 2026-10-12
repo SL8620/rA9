@@ -26,3 +26,8 @@ Makefile
 
 # Experiment data (rosbags etc.) — too large for git, regenerate via scripts
 experiments/
+
+# AI 工具残留（本地会话产物，不影响仿真/采集，不入版本库）
+.agents/
+.claude/
+skills-lock.json
