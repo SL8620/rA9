@@ -8,8 +8,12 @@
 指标（相对注入时刻 t=0）:
   dphi_max/dtheta_max  峰值滚转/俯仰偏离（对注入前 1s 基线）
   dy_max               沿推力方向轴的最大质心偏移（lat=y, fwd=x）
-  t_rec                恢复时间：|姿态偏差|<eps 且 |位置偏差|<eps_pos 持续 thold 秒
-                       （附 eps×0.5 / ×2 敏感性）；倒地则 t_rec=NA(FALLEN)
+  t_rec                恢复时间（口径 2026-10-12 修正）：|姿态偏差|<eps **且**
+                       平滑位移速率<eps_rate（即「稳定下来」，非「回到原点」）
+                       持续 thold 秒；附 eps×0.5 / ×2 敏感性；倒地则 NA(FALLEN)
+                       旧口径（要求位移回原点 ±eps_pos）保留为 t_rec_pos 供对照，
+                       对站立/行走工况天然不满足（机器人被推走不会自己走回来），
+                       勿用于 STATUS 判定。实测旧批 72 run 有 78% 因此假阴性。
   hiproll_tau_peak     恢复期髋滚转力矩峰值（/realTorque idx 0,6；对标 143.89/220 Nm）
   solve_time_push      注入后 5s 内 mpc/wbc 耗时统计
   contact events       恢复期接触切换数；足端滑移峰值（/foot_vel_estimate 范数）
@@ -75,6 +79,8 @@ def main():
     ap.add_argument("run")
     ap.add_argument("--eps", type=float, default=0.05)
     ap.add_argument("--eps-pos", type=float, default=0.02)
+    ap.add_argument("--eps-rate", type=float, default=0.02,
+                    help="「稳定下来」判据：平滑位移速率阈值 [m/s]（默认 0.02）")
     ap.add_argument("--thold", type=float, default=1.0)
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
@@ -143,10 +149,34 @@ def main():
     dy_max = float(np.abs(dax[post]).max()) if post.any() else float("nan")
 
     # ---- 恢复时间 t_rec（带保持时长；敏感性 eps×0.5/×2）----
-    def t_rec_for(eps, eps_pos, thold):
+    # ⚠️ 口径（2026-10-12 修正）：旧判据要求「位移回到原点 ±eps_pos」，
+    #    但站立扰动恢复测试里机器人被推走就待在那儿（不会自己走回原点），
+    #    且 trot/walk 的步态重定位让位置偏移持久存在 → **天然不满足**。
+    #    实测旧批 72 个正典 run 有 56 个（78%）因此被判 NOT_RECOVERED，
+    #    而 t_rec_att 显示 64/72（89%）姿态实际已稳住 —— 是假阴性。
+    #    现改为「**稳定下来**」判据：姿态进入 eps 带 **且** 平滑位移不再漂移
+    #    （|d(平滑位移)/dt| < eps_rate）。不平滑不行：trot-in-place 的基座位移
+    #    随步态振荡 ±2cm @~1.5Hz，直接求导 ~0.2 m/s 会永不满足。
+    #    旧口径保留为 t_rec_pos 供对照，不再参与 STATUS 判定。
+    dax_sm = np.full_like(dax, np.nan)
+    k = max(1, int(0.5 / max(float(np.median(np.diff(gt_t))), 1e-6)))   # 0.5s 平滑
+    if len(dax) > k:
+        cs = np.concatenate(([0.0], np.cumsum(dax)))
+        dax_sm[k - 1:] = (cs[k:] - cs[:-k]) / k
+    dax_rate = np.gradient(dax_sm, gt_t) if len(dax) > 2 else np.zeros_like(dax)
+    dax_rate = np.nan_to_num(dax_rate, nan=1e9)      # 边缘 nan 视为未稳定
+
+    def t_rec_for(eps, eps_pos, thold, mode="settled"):
+        """mode='settled'：姿态<eps 且 |位移平滑速率|<eps_rate（恢复=稳住）
+           mode='pos'   ：姿态<eps 且 |位移|<eps_pos（旧口径，回到原点）"""
         if not post.any():
             return float("nan")
-        ok = (np.abs(dphi) < eps) & (np.abs(dax) < eps_pos) & (np.abs(dth) < eps)
+        if mode == "settled":
+            ok = ((np.abs(dphi) < eps) & (np.abs(dth) < eps) &
+                  (np.abs(dax_rate) < a.eps_rate))
+        else:
+            ok = ((np.abs(dphi) < eps) & (np.abs(dax) < eps_pos) &
+                  (np.abs(dth) < eps))
         t_post = gt_t[post]
         ok_post = ok[post]
         need = thold
@@ -158,12 +188,13 @@ def main():
                 return float(t_post[i] - run_len - t_push_wall)
         return float("nan")
 
-    t_rec = t_rec_for(a.eps, a.eps_pos, a.thold)
-    t_rec_half = t_rec_for(a.eps * 0.5, a.eps_pos * 0.5, a.thold)
-    t_rec_dbl = t_rec_for(a.eps * 2, a.eps_pos * 2, a.thold)
-    # 姿态单指标（补充）：trot/walk 的步态重定位会让位置偏移持久存在，
-    # ε_pos=0.02m 对行走工况天然不满足；姿态口径不受此影响
-    t_rec_att = t_rec_for(a.eps, 1e9, a.thold)
+    t_rec = t_rec_for(a.eps, a.eps_pos, a.thold, "settled")
+    t_rec_half = t_rec_for(a.eps * 0.5, a.eps_pos * 0.5, a.thold, "settled")
+    t_rec_dbl = t_rec_for(a.eps * 2, a.eps_pos * 2, a.thold, "settled")
+    # 旧口径（回到原点）保留供对照 —— 对站立/行走工况天然不满足，勿用于判定
+    t_rec_pos = t_rec_for(a.eps, a.eps_pos, a.thold, "pos")
+    # 姿态单指标（补充）
+    t_rec_att = t_rec_for(a.eps, 1e9, a.thold, "settled")
 
     # 注入无响应 = 推力未送达（DDS 竞态丢消息），不是抗扰结果
     if np.isfinite(dphi_max) and np.isfinite(dy_max) and \
@@ -241,6 +272,10 @@ def main():
         f"t_rec sensitivity: eps*0.5 -> {t_rec_half if np.isfinite(t_rec_half) else 'NA'} s, "
         f"eps*2 -> {t_rec_dbl if np.isfinite(t_rec_dbl) else 'NA'} s (thold={a.thold}s); "
         f"t_rec_att(仅姿态 eps) -> {t_rec_att if np.isfinite(t_rec_att) else 'NA'} s",
+        f"t_rec 口径: 「稳定下来」= 姿态<eps 且 |平滑位移速率|<{a.eps_rate} m/s "
+        f"（2026-10-12 修正）；旧口径「回到原点±{a.eps_pos}m」="
+        f"{t_rec_pos if np.isfinite(t_rec_pos) else 'NA'} s（t_rec_pos，"
+        f"对站立/行走工况天然不满足，不参与判定）",
         f"hiproll_tau_peak={hip_peak:.2f} Nm (table2.4: need 143.89, peak 220)",
         ("solve_time_push: mpc mean/p99/max="
          + "/".join(f"{mpc_st[k]:.2f}" for k in ("mean", "p99", "max"))
