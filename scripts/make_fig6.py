@@ -501,37 +501,44 @@ def fig1():
     plt.rcParams["axes.unicode_minus"] = False
     fig, axes = plt.subplots(2, 2, figsize=(6.8, 3.2), sharex=False)
     for col, (title, groups) in enumerate((("仿真", RUNS), ("合成占位" + SYNTH_TAG, SYNTH))):
-        grid = np.arange(0, 15, 0.01)
+        grid = np.arange(0, 12, 0.01)   # 稳态窗相对时间（窗起点=0）
         for v in ("v00", "v01", "v03"):
             runs = groups[v]
             vxs, hs = [], []
+            vm, vs, zm, zs = [], [], [], []
             sys.path.insert(0, os.path.join(RA9, "scripts"))
             from zc_lib import com_height
             for n in runs:
                 d = load_run(n)
-                m, t0 = steady_slice(d, CMD[v])
+                m, _ = steady_slice(d, CMD[v])   # 稳态窗掩码：剔除原地踏步/加速过渡段
                 gt = d["ground_truth_state"]
-                t = gt[:, 0] - t0
-                vxs.append(np.interp(grid, t, gt[:, 4], left=np.nan, right=np.nan))
+                if not m.any():
+                    m = np.ones(len(gt), dtype=bool)
+                g = gt[m]
+                t = g[:, 0] - g[0, 0]            # 窗起点对齐为 0
                 jv = d["jointsPosVel"]
-                ij = np.clip(np.searchsorted(jv[:, 0], gt[:, 0]), 1, len(jv) - 1)
-                lf = np.abs(gt[:, 0] - jv[ij - 1, 0]) <= np.abs(gt[:, 0] - jv[ij, 0])
+                ij = np.clip(np.searchsorted(jv[:, 0], g[:, 0]), 1, len(jv) - 1)
+                lf = np.abs(g[:, 0] - jv[ij - 1, 0]) <= np.abs(g[:, 0] - jv[ij, 0])
                 joints = jv[np.where(lf, ij - 1, ij), 1:13]
-                zc = com_height(gt[:, 3], gt[:, 5], gt[:, 6], joints)
+                zc = com_height(g[:, 3], g[:, 5], g[:, 6], joints)
+                vxs.append(np.interp(grid, t, g[:, 4], left=np.nan, right=np.nan))
                 hs.append(np.interp(grid, t, zc, left=np.nan, right=np.nan))
+                vm.append(g[:, 4].mean()); vs.append(g[:, 4].std())
+                zm.append(np.nanmean(zc)); zs.append(np.nanstd(zc))
             vxs, hs = np.array(vxs), np.array(hs)
             mu, sd = np.nanmean(vxs, 0), np.nanstd(vxs, 0)
+            # 图例=稳态窗 mean±std（与 summary/表6.x 同口径，多 run 取均值）
             axes[0, col].plot(grid, mu, color=colors3[v], lw=1.1,
-                              label=f"vx={CMD[v]:.1f}: {np.nanmean(mu):.3f}±{np.nanmean(sd):.3f}")
+                              label=f"vx={CMD[v]:.1f}: {np.mean(vm):.3f}±{np.mean(vs):.3f}")
             axes[0, col].fill_between(grid, mu-sd, mu+sd, color=colors3[v], alpha=.15, lw=0)
             axes[0, col].axhline(CMD[v], color=GREY, ls="--", lw=.7)
             mh, sh = np.nanmean(hs, 0), np.nanstd(hs, 0)
             axes[1, col].plot(grid, mh, color=colors3[v], lw=1.1,
-                              label=f"vx={CMD[v]:.1f}: {np.nanmean(mh):.3f}±{np.nanmean(sh):.4f} m")
+                              label=f"vx={CMD[v]:.1f}: {np.mean(zm):.3f}±{np.mean(zs):.4f} m")
             axes[1, col].fill_between(grid, mh-sh, mh+sh, color=colors3[v], alpha=.15, lw=0)
         axes[0, col].set_title(f"({chr(97+col)}) {title}", fontsize=9.5, loc="left")
         axes[0, col].set_ylabel("vx [m/s]", fontsize=9)
-        axes[1, col].set_ylabel("基座高度 [m]", fontsize=9)   # z 口径待决，暂基座高度
+        axes[1, col].set_ylabel("质心高度 z_c [m]", fontsize=9)   # 6.4.1 口径：MuJoCo 正解
         axes[1, col].set_xlabel("稳态窗时间 [s]", fontsize=9)
         for r in (0, 1):
             axes[r, col].legend(fontsize=6.5, frameon=False)
