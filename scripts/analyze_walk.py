@@ -63,6 +63,8 @@ MPC_BUDGET_MS = 10.0   # task_.info mpcDesiredFrequency 100 Hz
 WBC_BUDGET_MS = 2.0    # mrtDesiredFrequency 500 Hz
 TAIL_TRIM_S = 0.5      # 稳态窗末端回缩
 DWELL_S = 0.3          # 进入目标带需保持时长
+GAIT_SMOOTH_S = 1.0    # 计划 duty 滑动均值窗长（判步态收敛）
+GAIT_TOL = 0.05        # 计划 duty 相对终值的收敛容差
 
 WANT = {"/ground_truth/state", "/cmd_contactFlag", "/simContactFlag",
         "/targetTorque", "/realTorque", "/targetPos", "/jointsPosVel",
@@ -194,14 +196,29 @@ def switch_err_ms(t_plan, t_act):
 
 
 # ---------------------------------------------------------------- 稳态窗
-def steady_window(t, vx, cmd, band, t_cmd, use_full):
-    """返回 (i0, i1, note)：稳态窗的闭开下标区间。"""
+def steady_window(t, vx, cmd, band, t_cmd, use_full, t_gait=None):
+    """返回 (i0, i1, note)：稳态窗的闭开下标区间。
+
+    窗起点 = max(速度带进入时刻, 步态起点, 指令时刻)。
+    ⚠️ 速度带判据对 v00（cmd_vx=0，原地 trot）**失效**：stance 与 trot 阶段
+    速度都是 0，判据无法区分 → 旧版把 trot 前的 stance 段全算进窗内
+    （实测 v00_21 窗内 stance 占 75%，duty 报 0.829 而真值 ≈0.5）。
+    故加步态起点下界 t_gait（/cmd_contactFlag 首次离开全 stance 态）。
+    v01/v03 不受影响（速度带已能区分）。
+    """
     if len(t) < 10:
         return 0, len(t), "样本过少，用全程"
     t_end = t[-1] - TAIL_TRIM_S
     if use_full or t_end <= t[0]:
         return 0, len(t), "用全程（--full 或录制过短）"
     lo = np.searchsorted(t, t_cmd, side="left")
+    note_gait = ""
+    if t_gait is not None:
+        lo_g = int(np.searchsorted(t, t_gait, side="left"))
+        lo_g = min(lo_g, len(t) - 1)               # 越界保护：t_gait 可能超出数据范围
+        if lo_g > lo:
+            lo = lo_g
+            note_gait = f"，gait收敛下界@{t_gait - t[0]:.1f}s"
     inside = np.abs(vx - cmd) <= band
     need = max(1, int(DWELL_S * len(t) / max(t[-1] - t[0], 1e-9)))
     run = 0
@@ -210,8 +227,8 @@ def steady_window(t, vx, cmd, band, t_cmd, use_full):
             break
         run = run + 1 if inside[i] else 0
         if run >= need:
-            return i - run + 1, len(t), f"band={band:.3f} m/s, dwell={DWELL_S}s"
-    return lo, len(t), f"未稳定进入目标带(band={band:.3f})，自指令起算"
+            return i - run + 1, len(t), f"band={band:.3f} m/s, dwell={DWELL_S}s{note_gait}"
+    return lo, len(t), f"未稳定进入目标带(band={band:.3f})，自{'步态起点' if t_gait is not None else '指令'}起算{note_gait}"
 
 
 # ---------------------------------------------------------------- 指标
@@ -360,7 +377,30 @@ def main():
 
     band = a.band if a.band is not None else max(0.05, 0.3 * abs(a.cmd))
     if len(gt_t):
-        i0, i1, win_note = steady_window(gt_t, vx, a.cmd, band, t_cmd, a.full)
+        # 步态收敛下界：/cmd_contactFlag 的滑动 duty 均值进入终值 ±GAIT_TOL
+        # 并保持。速度带判据对 v00 失效（原地 trot 的 stance/trot 速度都是 0），
+        # 需此下界排除 trot 前的 stance 段与过渡段，否则 duty 被拉高
+        # （实测 v00_21 旧判据窗内 stance+过渡占 75%，duty 报 0.829，真值 ≈0.5）。
+        # v01/v03 不受影响（速度带已能区分，此下界仅在更晚时才起作用）。
+        t_gait = None
+        cc_t, cc_v = data["/cmd_contactFlag"]
+        if len(cc_t) > 100:
+            d = cc_v.mean(axis=1)                  # 计划接触占空比
+            dt_cc = float(np.median(np.diff(cc_t)))
+            k = max(1, int(GAIT_SMOOTH_S / max(dt_cc, 1e-6)))
+            # 尾部滑动均值（cumsum，无 mode="same" 的边缘补零伪影）
+            cs = np.concatenate(([0.0], np.cumsum(d)))
+            sm = np.full(len(d), np.nan)
+            if len(d) > k:
+                sm[k - 1:] = (cs[k:] - cs[:-k]) / k
+            fin = float(np.nanmean(d[-k:]))        # 终值 = 末 k 样本均值
+            valid = np.where(np.isfinite(sm))[0]
+            off = valid[np.abs(sm[valid] - fin) > GAIT_TOL]
+            if len(off):
+                settle = int(off[-1] + 1)
+                if 0 <= settle < len(cc_t):
+                    t_gait = float(cc_t[settle])
+        i0, i1, win_note = steady_window(gt_t, vx, a.cmd, band, t_cmd, a.full, t_gait)
         w_lo, w_hi = float(gt_t[i0]), float(gt_t[min(i1, len(gt_t)) - 1])
     else:
         i0, i1, win_note, w_lo, w_hi = 0, 0, "无 /ground_truth/state", 0.0, 0.0
