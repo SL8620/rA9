@@ -74,6 +74,20 @@ def quat_to_rpy(q):
     return roll, pitch
 
 
+
+def guard_bag_size(bag_dir, limit_gb=2.0):
+    """bag 体积护栏：孤儿录包进程曾产生 489GB 的垃圾 bag（20 小时录制），
+    直接读会跑十几分钟 @100% CPU。超限直接拒，提示看 VOID_README.txt。
+    正常 run 150~300MB，8.7min 手动录制也才 1.3GB，2GB 阈值足够宽。"""
+    import glob
+    total = sum(os.path.getsize(f) for f in glob.glob(os.path.join(bag_dir, "*.mcap")))
+    if total > limit_gb * 1e9:
+        print(f"ERROR: {bag_dir} 的 bag 达 {total / 1e9:.1f} GB（阈值 {limit_gb} GB），"
+              f"疑似孤儿录包产生的垃圾数据。\n"
+              f"      若确认保留，请看该 run 目录的 VOID_README.txt，"
+              f"不要直接喂给分析脚本。")
+        sys.exit(3)
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("run")
@@ -87,6 +101,7 @@ def main():
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
     run = a.run.rstrip("/")
+    guard_bag_size(os.path.join(run, "bag"))
     out_dir = a.out or os.path.join(run, "analysis")
     os.makedirs(out_dir, exist_ok=True)
 
