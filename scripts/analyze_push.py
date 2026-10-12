@@ -81,6 +81,8 @@ def main():
     ap.add_argument("--eps-pos", type=float, default=0.02)
     ap.add_argument("--eps-rate", type=float, default=0.02,
                     help="「稳定下来」判据：平滑位移速率阈值 [m/s]（默认 0.02）")
+    ap.add_argument("--settle-window", type=float, default=1.5,
+                    help="位移平滑窗长 [s]，须≥2 个步态周期（trot ~0.67s，取 1.5s）")
     ap.add_argument("--thold", type=float, default=1.0)
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
@@ -159,7 +161,10 @@ def main():
     #    随步态振荡 ±2cm @~1.5Hz，直接求导 ~0.2 m/s 会永不满足。
     #    旧口径保留为 t_rec_pos 供对照，不再参与 STATUS 判定。
     dax_sm = np.full_like(dax, np.nan)
-    k = max(1, int(0.5 / max(float(np.median(np.diff(gt_t))), 1e-6)))   # 0.5s 平滑
+    # 平滑窗须覆盖 ≥2 个步态周期：trot ~1.5Hz（周期 0.67s），0.5s 窗滤不掉
+    # 步态振荡 → 残余 |速率| 中位 0.026 m/s 会假判未稳。1.5s（≈2 周期）实测
+    # |速率| 中位 0.0065、100% 落在 eps_rate 内。
+    k = max(1, int(a.settle_window / max(float(np.median(np.diff(gt_t))), 1e-6)))
     if len(dax) > k:
         cs = np.concatenate(([0.0], np.cumsum(dax)))
         dax_sm[k - 1:] = (cs[k:] - cs[:-k]) / k
@@ -168,12 +173,15 @@ def main():
 
     def t_rec_for(eps, eps_pos, thold, mode="settled"):
         """mode='settled'：姿态<eps 且 |位移平滑速率|<eps_rate（恢复=稳住）
+           mode='att'   ：仅姿态<eps（不含位移条件）
            mode='pos'   ：姿态<eps 且 |位移|<eps_pos（旧口径，回到原点）"""
         if not post.any():
             return float("nan")
         if mode == "settled":
             ok = ((np.abs(dphi) < eps) & (np.abs(dth) < eps) &
                   (np.abs(dax_rate) < a.eps_rate))
+        elif mode == "att":
+            ok = (np.abs(dphi) < eps) & (np.abs(dth) < eps)
         else:
             ok = ((np.abs(dphi) < eps) & (np.abs(dax) < eps_pos) &
                   (np.abs(dth) < eps))
@@ -193,8 +201,8 @@ def main():
     t_rec_dbl = t_rec_for(a.eps * 2, a.eps_pos * 2, a.thold, "settled")
     # 旧口径（回到原点）保留供对照 —— 对站立/行走工况天然不满足，勿用于判定
     t_rec_pos = t_rec_for(a.eps, a.eps_pos, a.thold, "pos")
-    # 姿态单指标（补充）
-    t_rec_att = t_rec_for(a.eps, 1e9, a.thold, "settled")
+    # 姿态单指标（补充）：仅姿态、不含位移条件
+    t_rec_att = t_rec_for(a.eps, 1e9, a.thold, "att")
 
     # 注入无响应 = 推力未送达（DDS 竞态丢消息），不是抗扰结果
     if np.isfinite(dphi_max) and np.isfinite(dy_max) and \

@@ -3,6 +3,11 @@
 # 有效 = analyze_push 判定不含：注入未生效 / 注入前已倒地（自发故障）。
 # 推力致倒（FALLEN）保留为扰动抑制上限证据（交付需求 D：不丢弃）。
 # 补录从 rep 04 起编号；单格最多试 MAX_TRY 次（自发故障率 ~25%）。
+#
+# COUNT_FALLEN=1（缺省）：FALLEN 也算有效（现行口径，交付需求 D）
+# COUNT_FALLEN=0：只计未倒样本 —— 每格需 3 个**恢复**样本时用此模式
+# 用法: topup_push.sh [N_VALID=3] [MAX_TRY=6] [REP_BASE=1]
+#   例: COUNT_FALLEN=0 topup_push.sh 3 6 21   # 批次 2x，补到 3 个未倒样本
 set -u
 RA9_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 N_VALID="${1:-3}"
@@ -11,14 +16,21 @@ REP_BASE="${3:-1}"
 declare -A IMP=( [L1]=3.1 [L2]=6.2 [L3]=12.4 )
 
 count_valid() {  # $1=cell前缀；只计 rep>=REP_BASE 的 run（配置变更后批次隔离）
+  # COUNT_FALLEN=1（缺省）：推力致倒（FALLEN）也算有效 —— 交付需求 D 不丢弃，
+  #   作为扰动抑制上限证据
+  # COUNT_FALLEN=0：只计**未倒**样本 —— 若每格需 3 个恢复样本则用此模式
   local n=0
   for d in "$RA9_DIR"/experiments/sim_push_$1_*/; do
     [ -f "$d/analysis/push_summary.txt" ] || continue
     local rep="${d%/}"; rep="${rep##*_}"
     [ "$rep" -ge "$REP_BASE" ] 2>/dev/null || continue
-    if ! grep -qE "注入疑似未生效|注入前已倒地" "$d/analysis/push_summary.txt"; then
-      n=$((n+1))
+    if grep -qE "注入疑似未生效|注入前已倒地" "$d/analysis/push_summary.txt"; then
+      continue
     fi
+    if [ "${COUNT_FALLEN:-1}" = "0" ] && grep -q "FALLEN" "$d/analysis/push_summary.txt"; then
+      continue
+    fi
+    n=$((n+1))
   done
   echo "$n"
 }
