@@ -32,7 +32,7 @@ ros2 bag record -o "$OUT/bag" \
   /humanoid/desiredFeetTrajectory/LTOE /humanoid/desiredFeetTrajectory/RTOE \
   /humanoid/desiredFeetTrajectory/LHEEL /humanoid/desiredFeetTrajectory/RHEEL \
   /ground_truth/state /jointsPosVel /imu /pauseFlag /simContactFlag /cmd_contactFlag \
-  /targetTorque /targetPos /targetVel /targetKp /targetKd /realTorque /foot_vel_estimate \
+  /targetTorque /targetPos /targetVel /targetKp /targetKd /realTorque /controlInput /foot_vel_estimate \
   /mpc_solve_time_ms /wbc_solve_time_ms /cmd_vel /hwswitch /pauseCmd /sim_time /sim_push_fired \
   > "$OUT/bag_record.log" 2>&1 &
 BAG_PID=$!
@@ -50,6 +50,9 @@ cmd_vx=$CMD_VX
 record_s=$REC_SECS
 date=$(date -Iseconds)
 git_commit=$(git -C "$RA9_DIR" rev-parse HEAD)
+git_dirty=$(git -C "$RA9_DIR" status --porcelain | wc -l)
+mjcxml_path=${MJCXML_PATH:-"(default) humanoid_legged_control_.xml"}
+actuator_model=ideal_torque_source（仿真无执行器动力学；非理想性由 make_synth_real.py 后处理叠加，见 NOTE.md §13）
 EOF
 
 python3 "$RA9_DIR/scripts/analyze_walk.py" "$OUT/bag" --cmd "$CMD_VX" --out "$OUT/analysis"

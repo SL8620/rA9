@@ -62,21 +62,37 @@ for label, arr, n in (("duty 计划", dP, 2), ("duty 实测", dA, 2),
 
 lines += ["", "## 6.4.3 力矩/关节跟踪（A1）", "",
           "| 指标 | v00 | v01 | v03 |", "|---|---|---|---|"]
-t_rms, t_max, q_rms, q_max = [], [], [], []
+t_rms, t_max, q_rms, q_max, pd_rms, clip_rms = [], [], [], [], [], []
 for v, names in mf6.RUNS.items():
-    tr, tm, qr, qm = [], [], [], []
+    tr, tm, qr, qm, pr, cr = [], [], [], [], [], []
     for n in names:
         import csv as _csv
         for r in _csv.DictReader(open(os.path.join(RA9, "experiments", n, "analysis", "metrics.csv"))):
             if r["category"] == "torque_tracking" and r["item"] == "rms_total": tr.append(float(r["value"]))
             if r["category"] == "torque_tracking" and r["item"] == "max_abs": tm.append(float(r["value"]))
+            if r["category"] == "torque_tracking" and r["item"] == "pd_correction_rms": pr.append(float(r["value"]))
+            if r["category"] == "torque_tracking" and r["item"] == "clip_loss_rms": cr.append(float(r["value"]))
             if r["category"] == "joint_tracking" and r["item"] == "rms_total_excl": qr.append(float(r["value"]))
             if r["category"] == "joint_tracking" and r["item"] == "max_abs_excl": qm.append(float(r["value"]))
     t_rms.append(np.mean(tr)); t_max.append(np.max(tm))
     q_rms.append(np.mean(qr)); q_max.append(np.max(qm))
-for label, arr, n in (("力矩误差 RMS [N·m]", t_rms, 2), ("力矩误差 max [N·m]", t_max, 1),
-                      ("关节角误差 RMS [rad]（剔除瞬态窗）", q_rms, 4), ("关节角误差 max [rad]（剔除瞬态窗）", q_max, 3)):
+    pd_rms.append(np.mean(pr) if pr else float("nan"))
+    clip_rms.append(np.mean(cr) if cr else float("nan"))
+for label, arr, n in (("力矩跟踪误差 RMS [N·m]（=PD修正+钳制损失）", t_rms, 2),
+                      ("力矩跟踪误差 max [N·m]", t_max, 1),
+                      ("其中 PD 修正量 RMS [N·m]", pd_rms, 2),
+                      ("其中 钳制损失 RMS [N·m]", clip_rms, 3),
+                      ("关节角误差 RMS [rad]（剔除瞬态窗）", q_rms, 4),
+                      ("关节角误差 max [rad]（剔除瞬态窗）", q_max, 3)):
     lines.append(f"| {label} | " + " | ".join(f(x, n) for x in arr) + " |")
+lines += ["",
+          "> ⚠️ **口径**（NOTE.md §12.2/§12.4）：`/realTorque` 语义于 2026-10-12 更正，",
+          "> 旧 bag 由恒等式 `qfrc_actuator=clip(data.ctrl,±LIM)` **分析层回填**（残差 0.0000 Nm）。",
+          "> 「力矩跟踪误差」= `/targetTorque` − 执行器出力 = **PD 修正量 + 钳制损失**，",
+          "> 实测钳制损失≈0，故该指标**实质是 PD 修正量的幅值**，不是执行器动力学跟踪误差",
+          "> （仿真执行器为理想力矩源，无动力学可跟踪）。**不可与真机同名指标直接对比。**",
+          "> ⚠️ **max 受两处低估**：旧 bag `/realTorque` 仅 29.4 Hz（漏 37~59% 峰值，",
+          "> 已改 500 Hz）；且峰值集中在瞬态垃圾窗（§7.5）。报峰值请用 `/targetTorque`。"]
 
 lines += ["", "## 6.4.4 求解耗时（A1 全部 9 run 聚合）", ""]
 mpc, wbc = [], []

@@ -46,7 +46,15 @@ class HumanoidSim(MuJoCoBase):
     self.pubJoints = self.node.create_publisher(Float32MultiArray, '/jointsPosVel', 2)
     self.pubOdom = self.node.create_publisher(Odometry, '/ground_truth/state', 2)
     self.pubImu = self.node.create_publisher(Imu, '/imu', 2)
+    # /realTorque = 执行器实际出力 qfrc_actuator[-12:]（广义力，已在关节 dof 上），
+    # 对应真机侧的"实测/估计力矩"，sim-to-real 力矩对比用这个。
+    # ⚠️ 2026-10-12 语义变更：此前误发 data.ctrl（= 前馈+PD 的**控制输入**），
+    #    与执行器出力无关，"力矩跟踪误差"实为 PD 修正量，指标恒等式化。
+    #    旧语义保留至 /controlInput，PD 修正诊断仍可复算。
+    #    既有 run（sim_base_*_0x 等）的 /realTorque 是旧语义，与新数据不可比。
     self.pubRealTorque = self.node.create_publisher(Float32MultiArray, '/realTorque', 2)
+    # /controlInput = data.ctrl = τ_ff + Kp·Δq + Kd·Δv（控制输入，未含执行器动态）
+    self.pubControlInput = self.node.create_publisher(Float32MultiArray, '/controlInput', 2)
     self.pubSimState = self.node.create_publisher(Bool,'/pauseFlag', 2)
     # 实测接触标志，长度 4：[l_foot_toe, r_foot_toe, l_foot_heel, r_foot_heel]（同 ModelSettings.h 的 contactNames3DoF）
     self.pubContactFlag = self.node.create_publisher(Int8MultiArray, '/simContactFlag', 2)
@@ -195,7 +203,6 @@ class HumanoidSim(MuJoCoBase):
     th_spin = Thread(target=HumanoidSim.thread_spin,args=(self,))
     th_spin.start()
     publish_time = self.data.time
-    torque_publish_time = self.data.time
     # 墙钟节拍：每 1/sim_rate 墙钟秒推进一个物理步（timestep 0.001、sim_rate 1000
     # → RTF=1）。欠账**有界追赶**：渲染/发布停顿造成的落后在恢复后补步；
     # 仅断点/系统级停顿（欠账 > MAX_CATCHUP_S）才裁剪。旧版 >0.1s 直接丢弃欠账，
@@ -324,15 +331,22 @@ class HumanoidSim(MuJoCoBase):
           simTimeMsg.data = self.data.time
           self.pubSimTime.publish(simTimeMsg)
 
-          publish_time = self.data.time
+          # /realTorque：执行器实际出力。qfrc_actuator 是 nv 维广义力，
+          # nv=18 = 浮动基 6 + 12 关节，关节分量取 [-12:]（顺序与 ctrl 对齐已验证）。
+          # 与 data.ctrl 的差别 = MuJoCo 对 ctrlrange/actuatorfrcrange 的截断
+          # （未含传动效率/摩擦，本仿真目前也未建模）。
+          # ⚠️ 与 500Hz 块同发：旧版在外层循环按 1/40s 发，受外层 ~60Hz 墙钟节拍
+          #    限制实得 29.4Hz，漏掉 37~59% 力矩峰值（2026-10-12 实测）。
+          realTorque = Float32MultiArray()
+          realTorque.data = array.array('f', self.data.qfrc_actuator[-12:].tolist())
+          self.pubRealTorque.publish(realTorque)
+          # /controlInput：控制输入 τ_ff + Kp·Δq + Kd·Δv（执行器前的指令量，
+          # 旧 /realTorque 语义，保留用于 PD 修正诊断）
+          controlInput = Float32MultiArray()
+          controlInput.data = array.array('f', self.data.ctrl[:].tolist())
+          self.pubControlInput.publish(controlInput)
 
-      if (self.data.time - torque_publish_time >= 1.0 / 40.0):
-        
-        targetTorque = Float32MultiArray()
-        targetTorque.data = array.array( 'f' , self.data.ctrl[:].tolist())
-        self.pubRealTorque.publish(targetTorque)
-        torque_publish_time = self.data.time
-        
+          publish_time = self.data.time
 
       if self.data.time >= self.simend:
           break

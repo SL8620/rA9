@@ -218,3 +218,238 @@ RMS 0.007~0.010 rad、max 0.12~0.16 rad；速度跟踪 RMSE 0.007~0.039 m/s；
 
 **修复后复验**：零扰动对照 STATUS: VALID、RTF=1.000；扰动批次六连 VALID
 （质量±5%/惯量±10%/质心±5mm 下行走稳定 → 控制器参数鲁棒性成立）。
+
+## 11. 速度指令送达延迟（fig6_1 平线段解释，2026-10-12）
+
+fig6_1 旧版前 ~7.5 s 为平线（原地踏步、无波动）——非"未使能"数据：解暂停后
+trot 步态即启动（接触切换从 t=0 连续），但 `/cmd_vel` 发布者 DDS 发现耗时
+~5-8 s，速度指令 7.5 s 才送达 → 机器人先原地踏步再加速趋近目标（进目标带
+~9.5 s）。控制器全程在工作，采集均在使能/解暂停之后 ✓。
+
+**图已修正**：fig6_1 改画稳态窗（剔除原地踏步段与加速过渡），图例统计与
+summary/表6.x 同口径（旧图例被全程均值拖垮：v03 显示 0.067 而稳态真值
+0.285）；下栏标签改"质心高度 z_c"（旧标"基座高度"系标签替换静默失败）。
+
+## 12. 力矩界**双层钳制** + `/realTorque` 语义更正（2026-10-12，sim-to-real 前置）
+
+### 12.1 🚩 MJCF 有两层力矩钳制，§9 的"20 Nm 落不了地"判断偏小
+
+`humanoid_legged_control_.xml` 里力矩上限被夹**两次**：
+
+| 层 | 位置 | 作用 | 改前 | 改后 |
+|---|---|---|---|---|
+| actuator 级 `ctrlrange` | `<actuator>` 各 `<motor>` | 钳制指令 ctrl | 200/200/**300/300**/200/200 | 200/200/**320/320**/200/200 |
+| joint 级 `actuatorfrcrange` | `<worldbody>` 各 `<joint>` | 钳制该关节执行器**合力** | **200 全轴** | 200/200/**320/320**/200/200 |
+
+**实际生效 = min(两层)**。改前两层不一致 → 全轴被夹在 200 Nm，膝·髋俯仰的
+320 请求实有 **120 Nm** 落不了地（§9-2 记的 20 Nm 是只看 ctrlrange 的低估）。
+
+**但影响可忽略**：正典九 run 中 >200 Nm 的样本占 **0.00~0.02%**，被削力矩占
+力矩积分 **0.00~0.03%**（峰值仅出现在瞬态垃圾窗）。**故既有数据不需要重录**，
+只是口径文档错了。§9-2 的裁决（保留 200/200 正典、踝 112 入待办）不变。
+
+**处置**：两层一并对齐 `task_.info torqueLimitsTask`（200/200/320/320/200/200），
+MJCF 内加注释固化"改任一层必须同步改另一层"。新旧数据差异仅在罕见截断瞬间，
+符合"可比性优先"的裁决取向。
+
+### 12.2 `/realTorque` 语义错误（更正后需重录力矩类指标）
+
+`humanoid_sim.py` 原本把 `data.ctrl`（= 前馈+PD 的**控制输入**）发布到
+`/realTorque`，而 PD 环就跑在 sim 内部 1 kHz、用无噪声无延迟真值状态。
+→ 验证章指标[3]"力矩跟踪 rms 6.13 Nm"实为**PD 修正量**，不是执行器跟踪
+误差；仿真里无执行器动力学可跟踪，该指标在 sim 侧是恒等式，**不能与真机
+同名指标对照**。
+
+**处置**（2026-10-12）：
+- `/realTorque` → `qfrc_actuator[-12:]`（执行器实际出力，含截断效应；nv=18
+  = 浮动基 6 + 12 关节，关节分量取 `[-12:]`，顺序与 ctrl 一一对应已验证）
+- 新增 `/controlInput` → `data.ctrl`，承接旧语义（PD 修正诊断仍可复算）
+- `scripts/analyze_walk.py` 自动识别代际（**有无 `/controlInput` 话题**）并在
+  metrics.csv / summary.txt 标注 `torque_semantics`，新 bag 另出 `pd_correction_*`
+
+**代际不可比**：`sim_base_*_0x`、`sim_push_*_0x`、walk_smoke_001、
+manual_repro_003 等旧 bag 的 `/realTorque` 是旧语义；新录 bag 是新语义。
+**力矩类指标需重录**，其余（基座跟踪/接触时序/求解耗时）不受影响可沿用。
+
+### 12.3 附带核实（本次复核确认无误的项）
+
+- `/realTorque` 仅 **29.5 Hz**（687 条/run），漏掉 30~60% 峰值 → 任何基于它的
+  "力矩峰值"都被系统性低估，报告峰值须用 `/targetTorque`（477 Hz）或新
+  `/realTorque` 并注明采样率。
+- `/simContactFlag` 存在接触抖动：v03_06 LTOE 66 次切换中 **26 次持续 <20 ms**
+  （最短 2.1 ms），规划侧 0 次 → summary 的 "switches 24/54" 差距由此而来，
+  `switch_err` 最近邻配对已压小影响，但论文报 switch 数应注明是否消抖。
+- `/foot_vel_estimate`（16 维）九 run **全程常量**，估计器未在算。
+- 录制窗口是**限时存活段**：9 run 中 6 个在 `collect.sh` 停止录制后 2~5 s 触发
+  pitch 安全限（**0 个在录制窗口内倒地**）；每档速度恰有一个干净 run
+  （v00_04 / v01_03 / v03_06）。论文须写明录制时长，勿暗示可持续行走。
+
+### 12.4 回填方案（2026-10-12 落地，替代重录）+ 发布频率修复
+
+**结论：语义变更不需要重录。** 恒等式
+`qfrc_actuator[-12:] = clip(data.ctrl, ±LIM)`
+在真实闭环数据（`smoke_newsem_02`）上实测**残差 0.0000 Nm**，故旧 bag 的新语义
+量可确定性重建。
+
+**实现：分析层回填，不改写 bag。** `analyze_walk.py` 检测到无 `/controlInput`
+时，取旧 `/realTorque`（= `data.ctrl`）作控制输入，按上式算执行器出力。
+理由：改写 147 个大 bag 风险高且污染溯源（原数据 vs 修改后数据不可分）；
+分析层回填原始数据不动，且额外可得 PD 修正量与钳制损失两个分解项。
+两代 bag 的 `torque_tracking` 口径由此**统一，可跨代比较**。
+
+**指标自动分解**（summary [3] 现同时给出三项）：
+- `torque tracking` = PD 修正量 + 钳制损失（实测两项相等 ⇒ 该指标实为 PD 修正量）
+- `PD 修正量(τ_ff→控制输入)` = `/controlInput − /targetTorque`
+- `钳制损失(控制输入→执行器)` = `/controlInput − /realTorque`
+
+**发布频率修复**：`/realTorque` `/controlInput` 原在外层循环按 `1/40s` 发布，
+受外层 ~60Hz 墙钟节拍限制实得 **29.4Hz**，漏 37~59% 力矩峰值。已并入 500Hz
+发布块（与 `/sim_time` `/imu` 同源），实测 **438Hz**（500×录包捕获率 88%）。
+
+| bag | /controlInput | 平均漏峰 | 最大漏峰 |
+|---|---|---|---|
+| smoke_newsem_02（改前） | 29.4 Hz | **54%** | 93% |
+| smoke_newsem_03（改后） | **438 Hz** | **−2%** | 9% |
+
+（−2% 是 PD 使 `/controlInput` 峰值可略超 `/targetTorque`，正常。）
+
+**待办：重录推迟到执行器链路建模之后一次到位**（加延迟/力矩包络/摩擦会改变
+行走行为，现在重录可能白做）。届时 9 个基线 run 的力矩峰值指标即可干净取用。
+
+**验证脚本**（可复跑）：
+- `scripts/verify_torque.py` + `scripts/run_verify.sh` —— 在线注入式验证，
+  令 Kp=Kd=0 使 `ctrl ≡ targetTorque`，直接量钳制。六段全过，含正负向对称
+  与全轴打满（实测生效上限 200/200/320/320/200/200）。
+- `scripts/verify_torque_chain.py <bag>` —— bag 级链路校验（恒等式/钳制统计/
+  代际识别）。`scripts/run_verify.sh chain <名>` = 跑闭环 + 自动校验。
+
+**冒烟产物**：`experiments/smoke_newsem_01~03`（01 未录 `/controlInput`，系
+`run_experiment.sh` 录包话题表写死所致，已补；02 改频率前；03 改后）。
+
+## 13. sim2real gap 后处理流水线（2026-10-12）
+
+### 13.1 方案与边界
+
+**架构**：不把执行器动力学放进仿真回路（会改行走、有失稳风险）。保持"仿真能走、
+数据照常采"，用 **sim2real gap 后处理**把非理想性叠加到录包上，产出**合成**数据。
+这是 `scripts/make_synth_real.py` 的既有模式，本轮扩展到延迟链路与力矩-转速包络，
+并新增 `scripts/gap_sensitivity.py` 做逐 gap 灵敏度分析。
+
+**⚠️ 开环近似（论文 6.6 局限性必须写）**：后处理只叠加**信号特性**，轨迹仍是理想
+执行器跑出来的。产物 = "理想执行器轨迹 + 非理想信号特性"，**不是**"真实执行器下
+会产生的轨迹"。指令延迟只移位信号、不改变运动（闭环反馈效应缺失）；摩擦/背隙
+只能作为力矩损失叠加，不能反馈回运动。
+
+**⚠️ 合成标记纪律**（`deliverables/C6/README.md` 总原则）：产物一律 `synth_` 前缀
++ `SYNTHETIC.txt` + `params.txt: synthetic=true`，**禁止在论文中呈现为真机实测**。
+用途限定：灵敏度分析 / A3 实机补录占位与流水线验证 / 图表占位。
+
+**参数来源**：全部按器件手册典型量级**估计**，`params.txt` 逐项记 `param_sources`
+（`[估计]`/`[手册]`/`[实测]`），真机参数到位后可替换。不是"编造数据"——估的是
+仿真/后处理模型的参数，报出的指标仍全部由 `analyze_walk.py` 从录包复算。
+
+### 13.2 新增的两个 gap（`make_synth_real.py`）
+
+| gap | 模型 | 作用话题 |
+|---|---|---|
+| `delay_cmd_ms` | 执行侧指令延迟 | `/target{Torque,Pos,Vel,Kp,Kd}` `/controlInput` |
+| `delay_obs_ms` | 传感侧延迟 | `/jointsPosVel` `/imu` `/ground_truth/state` `/realTorque` `/simContactFlag` |
+| `torque_env` | τ_max(ω)=min(τ_rated, τ_stall·(1−\|ω\|/ω_nl)) | `/realTorque` |
+
+**接触标志的延迟口径**：`/simContactFlag` 是足底接触的**测量**（真机有开关去抖
++ 传感延迟）故走 `delay_obs`；`/cmd_contactFlag` 是**规划**（不经传感）故不延迟。
+两者之差正是 `switch_err` 要度量的。实测（`delay_obs=3ms` 单开）：
+`switch_err 5.47 → 7.92 ms`、`agree 96.97% → 96.47%`，`/cmd_contactFlag`
+逐字节未变 ✓。
+
+**延迟实现口径**：按**时间域最近邻**移位，不按样本数移位（录包时间戳突发投递，
+§12.3），不插值（避免造数据）。等效延迟误差上界 = 局部采样间隔的一半（实测
+均匀 1 kHz 时 0 µs、突发形态 50~200 µs）。前 τ 秒无源数据 → 丢弃并计数进 params。
+`/controlInput` 走 cmd（执行器输入）、`/realTorque` 走 obs（执行器输出的**测量**）。
+
+**包络实现口径**：ω 取 `/jointsPosVel` 12:24 列，按时间域最近邻对齐到力矩时间戳；
+与既有电压跌落项取 min。
+
+### 13.3 单 gap 隔离验证（脚本可复算）
+
+| 验证 | 结果 |
+|---|---|
+| `delay_*`：7 话题输出载荷 == 源[t−τ] | **100.00% 逐字节一致** ✓ |
+| `delay_*`：同索引重合率 | 0.4~2.7%（证明确实移位；`/targetKp` 100% 因 Kp 大段恒定） |
+| `torque_env`：不碰 `/targetTorque` `/jointsPosVel` `/ground_truth/state` | 100.00% 未变 ✓ |
+| `torque_env`：`/realTorque` 被改变且不超界 | 12/686 样本，超界 0 ✓ |
+
+### 13.4 关键发现：力矩-转速包络在行走速度下几乎不咬合
+
+在 `sim_base_v03_02`（0.3 m/s trot）全量 `/targetTorque`（486 Hz）上：
+
+| ω_nl [rad/s] | 咬合阈值 | 被剪样本 | 被剪力矩积分 | 最大剪切 |
+|---|---|---|---|---|
+| 5.0 | 1.29 rad/s | 0.24% | 0.56% | 178 N·m |
+| **8.0**（取值） | 2.07 rad/s | **0.12%** | **0.24%** | 98 N·m |
+| 12.0 | 3.11 rad/s | 0.07% | 0.13% | 40 N·m |
+| 25.0 | 6.48 rad/s | 0.00% | 0.00% | 15 N·m |
+
+**ω_nl 取 8.0 rad/s** 的依据：由膝峰值 320 N·m 反推减速比 i≈40~80，电机空载
+3000 rpm(314 rad/s) → 关节侧 ω_nl≈4~8 rad/s，取上界。
+
+**结论一**：行走速度下（各关节 |ω| p99 < 3.8 rad/s），力矩-转速包络不是主要
+sim2real gap；**力矩幅值上限**才是。被剪样本集中在瞬态垃圾窗（§7.5），非正常摆动。
+
+**结论二（更重要）**：仿真实测关节转速 **膝 10.4 rad/s、踝 22~24 rad/s，已超过
+合理减速关节的空载转速（ω_nl≈4~8 rad/s）**。即：理想执行器跑出了真机做不到的
+速度。这本身是 sim-to-real gap 的直接证据，比包络的数值影响更有论文价值。
+
+**结论三**：旧 bag 的 `/realTorque` 只有 29.4 Hz（§12.4），**恰好漏掉包络咬合的
+瞬时**——故单 gap 隔离下 `/realTorque` 仅 12/686 样本被改变。用 500 Hz 新数据
+（`smoke_newsem_03`）或 `/targetTorque` 才能看全。
+
+### 13.5 灵敏度表与解读
+
+全表见 `deliverables/C6/analysis/gap_sensitivity_sim_base_v03_02.md`
+（`scripts/gap_sensitivity.py` 逐 gap 单开复算，源 run `sim_base_v03_02`；
+各变体 bag 在 `experiments/gap_sens_sim_base_v03_02/`，按 README「只留小体积
+结果」的规矩不进 deliverables）。
+
+**⚠️ 最重要的结论：验证章的稳态 RMS 指标对 sim2real gap 基本不敏感。**
+
+| gap | 力矩 RMS Δ | 力矩 max Δ | 关节角 RMS Δ | 解释 |
+|---|---|---|---|---|
+| `hyst_lag` | +0.075 | **−4.18** | 0 | 一阶滞后削峰，唯一明显改变峰值的项 |
+| `torque_env` | +0.039 | 0 | 0 | 仅 12/686 样本被剪 |
+| `delay_cmd` | −0.060 | 0 | **+0.00037** | 目标延迟 → 跟踪误差上升（唯一影响关节跟踪的项） |
+| `delay_obs` | +0.002 | 0 | +0.00034 | 测量延迟 → 同上 |
+| `backlash` | 0 | 0 | +0.00044 | 只影响关节角，不影响力矩 |
+| `voltage` | 0 | 0 | 0 | 仅 1/686 样本（158.8→150.0） |
+| `encoder`/`imu`/`est`/`solve_jitter` | 0 | 0 | ~0 | 噪声量级远小于信号 |
+
+**原因（物理上合理，非实现缺陷）**：行走工况下执行器**远未用满**——
+`/realTorque` RMS ≈ 25 N·m，而饱和水平 ≈150 N·m、力矩界 200~320 N·m。
+非理想性只在**峰值与瞬态**上显现，稳态窗 RMS 平均掉了。
+
+**对论文的意义（6.6 局限性）**：
+1. 验证章的 RMS 类指标**不能**用来区分仿真与实机 —— 它们对 gap 不敏感，
+   仿真值与实机值接近**不代表**保真度高。
+2. 要检测 sim2real gap，必须看**峰值/瞬态类**指标：力矩峰值、接触切换瞬态、
+   高频段误差、饱和持续时间。
+3. 旧 bag 的 `/realTorque` 29.4 Hz 采样（§12.4）恰好漏掉这些瞬态 → 放大了
+   上表的"不敏感"。**重录后（500 Hz）本表应重算**，峰值类差异会显现。
+
+**已解决（2026-10-12）**：`/simContactFlag` 已纳入 `delay_obs`。它是测量（真机
+有开关去抖+传感延迟），`/cmd_contactFlag` 是规划不延迟。纳入后 `switch_err`
+对延迟开始响应（5.47 → 7.92 ms @3ms 延迟），上表 `switch_err` 行需按新口径重算
+（`gap_sensitivity.py` 可复算）。
+
+### 13.6 复算入口
+
+```bash
+# 单 gap 隔离验证
+python3 scripts/make_synth_real.py experiments/sim_base_v03_02 <out> --gaps delay_cmd,delay_obs
+python3 scripts/make_synth_real.py experiments/sim_base_v03_02 <out> --gaps torque_env
+
+# 全 gap 灵敏度表
+python3 scripts/gap_sensitivity.py experiments/sim_base_v03_02 --cmd 0.3 --seed 42
+```
+
+gap 注册表（10 项，`--gaps`/`--no-gaps` 逐项开关）：`delay_cmd` `delay_obs`
+`torque_env` `hyst_lag` `backlash` `encoder` `imu` `est` `voltage` `solve_jitter`。

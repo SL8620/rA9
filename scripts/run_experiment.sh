@@ -65,7 +65,7 @@ ros2 bag record -o "$OUT/bag" \
   /humanoid/desiredFeetTrajectory/LTOE /humanoid/desiredFeetTrajectory/RTOE \
   /humanoid/desiredFeetTrajectory/LHEEL /humanoid/desiredFeetTrajectory/RHEEL \
   /ground_truth/state /jointsPosVel /imu /pauseFlag /simContactFlag /cmd_contactFlag \
-  /targetTorque /targetPos /targetVel /targetKp /targetKd /realTorque /foot_vel_estimate \
+  /targetTorque /targetPos /targetVel /targetKp /targetKd /realTorque /controlInput /foot_vel_estimate \
   /mpc_solve_time_ms /wbc_solve_time_ms /cmd_vel /hwswitch /pauseCmd /sim_time /sim_push_fired \
   > "$OUT/bag_record.log" 2>&1 &
 BAG_PID=$!
@@ -233,6 +233,18 @@ push_spec=$PUSH_STATUS
 date=$(date -Iseconds)
 git_commit=$(git -C "$RA9_DIR" rev-parse HEAD)
 git_dirty=$(git -C "$RA9_DIR" status --porcelain | wc -l)
+mjcxml_path=${MJCXML_PATH:-"(default) humanoid_legged_control_.xml"}
+task_info_sha=$(sha256sum "$RA9_DIR/src/humanoid_control/humanoid_interface/config/mpc/task_.info" | cut -c1-12)
+mjcf_sha=$(sha256sum "${MJCXML_PATH:-$RA9_DIR/install/humanoid_legged_description/share/humanoid_legged_description/mjcf/humanoid_legged_control_.xml}" 2>/dev/null | cut -c1-12)
+torque_limits_task=$(python3 -c "
+import re
+t=open('$RA9_DIR/src/humanoid_control/humanoid_interface/config/mpc/task_.info',encoding='utf-8').read()
+b=re.search(r'torqueLimitsTask\s*\{(.*?)\}',t,re.S).group(1)
+d={int(i):float(v) for i,v in re.findall(r'\(\s*(\d)\s*,\s*0\s*\)\s+([\d.]+)',b)}
+print('/'.join('%.0f'%d[i] for i in range(6)))
+" 2>/dev/null)
+torque_limits_src=[实测]task_.info torqueLimitsTask
+actuator_model=ideal_torque_source（仿真无执行器动力学；非理想性由 make_synth_real.py 后处理叠加，见 NOTE.md §13）
 EOF
 echo "[run] done -> $OUT"
 grep -A4 "Benchmarking" "$OUT/launch.log" | tail -8

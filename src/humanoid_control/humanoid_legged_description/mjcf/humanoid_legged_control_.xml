@@ -89,14 +89,14 @@
 
           <body name="Hip_L_Pitch_Link" pos="0 0 -0.10595">
             <inertial pos="-7.7e-05 0.02564 -0.167614" quat="0.99923 0.0391185 -0.00304178 0.000485083" mass="6.22" diaginertia="0.0567306 0.0534788 0.0124466"/>
-            <joint name="Hip_L_Pitch_Joint" pos="0 0 0" axis="0 1 0" range="-0.78 0.78" actuatorfrcrange="-200 200"/>
+            <joint name="Hip_L_Pitch_Joint" pos="0 0 0" axis="0 1 0" range="-0.78 0.78" actuatorfrcrange="-320 320"/>
             <geom class="visual" mesh="Link_hip_l_pitch" type="mesh" rgba="0.89804 0.91765 0.92941 1"/>
             <geom class="collision" size="0.08 0.06" pos="0 0.035 -0.16" quat="0.707388 0.706825 0 0" type="cylinder" rgba="0.89804 0.91765 0.92941 1"/>
             <geom class="collision" size="0.065 0.035 0.125" pos="0 0 -0.22" type="box" rgba="0.89804 0.91765 0.92941 1"/>
 
             <body name="Knee_L_Pitch_Link" pos="0 0 -0.34">
               <inertial pos="-0.002029 -8.4e-05 -0.156302" quat="0.708888 -0.00197532 0.00439659 0.705305" mass="3.32" diaginertia="0.0301493 0.0297803 0.00193338"/>
-              <joint name="Knee_L_Pitch_Joint" pos="0 0 0" axis="0 1 0" range="0 1.2" actuatorfrcrange="-200 200"/>
+              <joint name="Knee_L_Pitch_Joint" pos="0 0 0" axis="0 1 0" range="0 1.2" actuatorfrcrange="-320 320"/>
               <geom class="visual" mesh="Link_knee_l_pitch" type="mesh" rgba="0.89804 0.91765 0.92941 1"/>
               <geom class="collision" size="0.05 0.04 0.15" pos="0 0 -0.22" type="box" rgba="0.89804 0.91765 0.92941 1"/>
 
@@ -134,14 +134,14 @@
 
           <body name="Hip_R_Pitch_Link" pos="0 0 -0.10595">
             <inertial pos="-7e-06 -0.02564 -0.167614" quat="0.99923 -0.0391185 -0.00304178 -0.000485083" mass="6.22" diaginertia="0.0567306 0.0534788 0.0124466"/>
-            <joint name="Hip_R_Pitch_Joint" pos="0 0 0" axis="0 1 0" range="-0.78 0.78" actuatorfrcrange="-200 200"/>
+            <joint name="Hip_R_Pitch_Joint" pos="0 0 0" axis="0 1 0" range="-0.78 0.78" actuatorfrcrange="-320 320"/>
             <geom class="visual" mesh="Link_hip_r_pitch" type="mesh" rgba="0.89804 0.91765 0.92941 1"/>
             <geom class="collision" size="0.08 0.06" pos="0 -0.035 -0.16" quat="0.707388 0.706825 0 0" type="cylinder" rgba="0.89804 0.91765 0.92941 1"/>
             <geom class="collision" size="0.065 0.035 0.125" pos="0 0 -0.22" type="box" rgba="0.89804 0.91765 0.92941 1"/>
 
             <body name="Knee_R_Pitch_Link" pos="0 0 -0.34">
               <inertial pos="-0.002029 8.4e-05 -0.156302" quat="0.706974 0.00196317 -0.00440215 0.707223" mass="3.32" diaginertia="0.0301493 0.0297803 0.00193338"/>
-              <joint name="Knee_R_Pitch_Joint" pos="0 0 0" axis="0 1 0" range="0 1.2" actuatorfrcrange="-200 200"/>
+              <joint name="Knee_R_Pitch_Joint" pos="0 0 0" axis="0 1 0" range="0 1.2" actuatorfrcrange="-320 320"/>
               <geom class="visual" mesh="Link_knee_r_pitch" type="mesh" rgba="0.89804 0.91765 0.92941 1"/>
               <geom class="collision" size="0.05 0.04 0.15" pos="0 0 -0.22" type="box" rgba="0.64706 0.61961 0.58824 1"/>
 
@@ -173,16 +173,28 @@
 
 
 <actuator>
+  <!-- 力矩界口径（2026-10-12 统一，勿再分叉）：
+       ⚠️⚠️ 本模型有**两层**力矩钳制，改任一层都要同步改另一层：
+         1. actuator 级 ctrlrange（下方 <motor>）——钳制指令 ctrl
+         2. joint 级 actuatorfrcrange（<worldbody> 各 <joint> 上）——钳制该关节
+            执行器**合力**，独立于 ctrlrange 再夹一次
+       实际生效上限 = min(ctrlrange, actuatorfrcrange)。2026-10-12 前两层不一致
+       （ctrlrange 300 / actuatorfrcrange 200），实际全轴被夹在 200，膝·髋俯仰的
+       320 请求有 120 Nm 落不了地（实测占力矩积分 0.00~0.03%，影响可忽略但口径错）。
+       现两层一致：200/200/320/320/200/200 == task_.info torqueLimitsTask。
+       对应硬件 C2 表2.4：髋滚转 220 / 髋偏航·髋俯仰·膝 396 / 踝俯仰 112（⚠️待定）。
+       当前取值均保守于硬件，唯踝俯仰 200 > 硬件 112 是已知未决项
+       （见 deliverables/C6/analysis/NOTE.md §9-2，论文仓 待办.md #5）。 -->
   <motor gear="1" joint="Hip_L_Roll_Joint"      name="leg_l1_motor" ctrllimited="true"  ctrlrange='-200 200'/>
   <motor gear="1" joint="Hip_L_Yaw_Joint"       name="leg_l2_motor" ctrllimited="true"  ctrlrange='-200 200'/>
-  <motor gear="1" joint="Hip_L_Pitch_Joint"     name="leg_l3_motor" ctrllimited="true"  ctrlrange='-300 300'/>
-  <motor gear="1" joint="Knee_L_Pitch_Joint"    name="leg_l4_motor" ctrllimited="true"  ctrlrange='-300 300'/>
+  <motor gear="1" joint="Hip_L_Pitch_Joint"     name="leg_l3_motor" ctrllimited="true"  ctrlrange='-320 320'/>
+  <motor gear="1" joint="Knee_L_Pitch_Joint"    name="leg_l4_motor" ctrllimited="true"  ctrlrange='-320 320'/>
   <motor gear="1" joint="Ankle_L_Pitch_Joint"   name="leg_l5_motor" ctrllimited="true"  ctrlrange='-200 200'/>
   <motor gear="1" joint="Ankle_L_Roll_Joint"    name="leg_l6_motor" ctrllimited="true"  ctrlrange='-200 200'/>
   <motor gear="1" joint="Hip_R_Roll_Joint"      name="leg_r1_motor" ctrllimited="true"  ctrlrange='-200 200'/>
   <motor gear="1" joint="Hip_R_Yaw_Joint"       name="leg_r2_motor" ctrllimited="true"  ctrlrange='-200 200'/>
-  <motor gear="1" joint="Hip_R_Pitch_Joint"     name="leg_r3_motor" ctrllimited="true"  ctrlrange='-300 300'/>
-  <motor gear="1" joint="Knee_R_Pitch_Joint"    name="leg_r4_motor" ctrllimited="true"  ctrlrange='-300 300'/>
+  <motor gear="1" joint="Hip_R_Pitch_Joint"     name="leg_r3_motor" ctrllimited="true"  ctrlrange='-320 320'/>
+  <motor gear="1" joint="Knee_R_Pitch_Joint"    name="leg_r4_motor" ctrllimited="true"  ctrlrange='-320 320'/>
   <motor gear="1" joint="Ankle_R_Pitch_Joint"   name="leg_r5_motor" ctrllimited="true"  ctrlrange='-200 200'/>
   <motor gear="1" joint="Ankle_R_Roll_Joint"    name="leg_r6_motor" ctrllimited="true"  ctrlrange='-200 200'/>
 </actuator>

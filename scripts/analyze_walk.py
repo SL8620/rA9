@@ -6,6 +6,16 @@
   1. 基座速度/高度跟踪 (/ground_truth/state vs cmd)  mean±std + RMSE
   2. 接触时序          (/cmd_contactFlag 规划 vs /simContactFlag 实际)
   3. 力矩/关节跟踪     (/targetTorque vs /realTorque; /targetPos vs /jointsPosVel)
+     ⚠️ /realTorque 语义在 2026-10-12 变更（humanoid_sim.py）：
+        新 bag（有 /controlInput）→ /realTorque = qfrc_actuator[-12:] =
+          执行器实际出力，/controlInput = data.ctrl（控制输入）。
+        旧 bag（无 /controlInput）→ /realTorque 记的是 data.ctrl。
+        **旧 bag 由恒等式 qfrc_actuator[-12:] = clip(data.ctrl, ±LIM) 确定性回填**，
+        真实闭环数据实测残差 0.0000 Nm（见 NOTE.md §12）。回填在分析层做，
+        不改写 bag；两代数据的 torque_tracking 口径由此统一，可跨代比较。
+        脚本自动识别并在 metrics.csv/summary.txt 标注 torque_semantics。
+        ⚠️ /realTorque 旧版发布频率受外层 ~60Hz 节拍限制实得 29.4Hz，漏
+        37~59% 力矩峰值 → max 被低估，报峰值请用 /targetTorque（486Hz）。
   4. 求解实时性        (/mpc_solve_time_ms, /wbc_solve_time_ms 分布 vs 预算)
 产物: <out>/metrics.csv + summary.txt + fig1..fig4.png
 
@@ -24,6 +34,7 @@ import argparse
 import csv
 import math
 import os
+import re
 import sys
 
 # rosbag2_py/rclpy 的 C 扩展依赖 ROS 共享库（LD_LIBRARY_PATH 在进程启动时
@@ -55,7 +66,30 @@ DWELL_S = 0.3          # 进入目标带需保持时长
 
 WANT = {"/ground_truth/state", "/cmd_contactFlag", "/simContactFlag",
         "/targetTorque", "/realTorque", "/targetPos", "/jointsPosVel",
-        "/mpc_solve_time_ms", "/wbc_solve_time_ms", "/cmd_vel", "/sim_time"}
+        "/mpc_solve_time_ms", "/wbc_solve_time_ms", "/cmd_vel", "/sim_time",
+        "/controlInput"}   # 存在与否区分 /realTorque 新旧语义（见文件头）
+
+# /realTorque 语义代际：旧 bag 无 /controlInput，/realTorque 实为控制输入
+TORQUE_SEMANTICS_NEW = "qfrc_actuator（执行器实际出力）"
+TORQUE_SEMANTICS_BACKFILL = ("qfrc_actuator = clip(旧/realTorque=data.ctrl, ±LIM) "
+                             "【回填·恒等式残差 0.0000，见 NOTE.md §12】")
+
+
+def _read_torque_limits():
+    """力矩界（task_.info torqueLimitsTask），12 维。回填 clip 与钳制统计用。"""
+    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     "src/humanoid_control/humanoid_interface/config/mpc/task_.info")
+    try:
+        txt = open(p, encoding="utf-8").read()
+        blk = re.search(r"torqueLimitsTask\s*\{(.*?)\}", txt, re.S).group(1)
+        d = {int(i): float(v) for i, v in
+             re.findall(r"\(\s*(\d)\s*,\s*0\s*\)\s+([\d.]+)", blk)}
+        return np.array([d[i % 6] for i in range(12)], float)
+    except Exception:                       # 配置缺失时退回 MJCF/实验常用值
+        return np.array([200, 200, 320, 320, 200, 200] * 2, float)
+
+
+TORQUE_LIMITS = _read_torque_limits()
 
 
 # ---------------------------------------------------------------- IO
@@ -404,8 +438,29 @@ def main():
         problems.append("接触标志为空/维度不符")
 
     # ---- 3. 力矩/关节跟踪 ----
-    tau = track_metrics(data["/targetTorque"], data["/realTorque"], window, 12)
+    # /realTorque 语义代际识别与回填（见文件头口径说明）：
+    #   新 bag 带 /controlInput：/realTorque = qfrc_actuator[-12:]，
+    #                          /controlInput = data.ctrl（旧语义）
+    #   旧 bag 不带：/realTorque 记的就是 data.ctrl。新语义由恒等式
+    #       qfrc_actuator[-12:] = clip(data.ctrl, ±LIM)
+    #     确定性回填（真实闭环数据实测残差 0.0000 Nm，见 NOTE.md §12）。
+    #   回填在分析层做，**不改写 bag**——原始数据不动，溯源干净。
+    has_ctrl_in = len(data["/controlInput"][0]) > 0
+    if has_ctrl_in:
+        ctrl_t, ctrl_v = data["/controlInput"]
+        real_t, real_v = data["/realTorque"]
+        torque_semantics = TORQUE_SEMANTICS_NEW
+    else:
+        ctrl_t, ctrl_v = data["/realTorque"]
+        real_t = ctrl_t
+        real_v = np.clip(ctrl_v, -TORQUE_LIMITS, TORQUE_LIMITS)
+        torque_semantics = TORQUE_SEMANTICS_BACKFILL
+    tau = track_metrics(data["/targetTorque"], (real_t, real_v), window, 12)
     q = track_metrics(data["/targetPos"], data["/jointsPosVel"], window, 12)
+    # PD 修正量：前馈 τ_ff 到控制输入的增量（两代 bag 均可得）
+    tau_pd = track_metrics(data["/targetTorque"], (ctrl_t, ctrl_v), window, 12)
+    # 钳制损失：控制输入被力矩界削掉的部分（两代 bag 均可得）
+    tau_clip = track_metrics((ctrl_t, ctrl_v), (real_t, real_v), window, 12)
 
     # ---- 瞬态垃圾窗检测与剔除（2026-10-10 评审）----
     # 控制器 /targetPos 存在 ~12ms 垃圾窗（自发故障同族轻量版）：相邻采样跳变
@@ -511,12 +566,21 @@ def main():
                 w.writerow(["contact_timing", f"{row['foot']}.{k}", v])
         for row in points:
             w.writerow(["contact_point", f"{row['point']}.duty_actual", row["duty_actual"]])
+        w.writerow(["torque_tracking", "semantics", torque_semantics])
         if tau:
             for i in range(len(tau["rms_per"])):
                 w.writerow(["torque_tracking", f"joint{i}.rms", float(tau["rms_per"][i])])
                 w.writerow(["torque_tracking", f"joint{i}.max", float(tau["max_per"][i])])
             w.writerow(["torque_tracking", "rms_total", tau["rms_total"]])
             w.writerow(["torque_tracking", "max_abs", tau["max_abs"]])
+        if tau_pd:
+            w.writerow(["torque_tracking", "pd_correction_rms", tau_pd["rms_total"]])
+            w.writerow(["torque_tracking", "pd_correction_max", tau_pd["max_abs"]])
+        if tau_clip:
+            w.writerow(["torque_tracking", "clip_loss_rms", tau_clip["rms_total"]])
+            w.writerow(["torque_tracking", "clip_loss_max", tau_clip["max_abs"]])
+        w.writerow(["torque_tracking", "limits",
+                    "/".join(f"{x:.0f}" for x in TORQUE_LIMITS)])
         if q:
             for i in range(len(q["rms_per"])):
                 w.writerow(["joint_tracking", f"joint{i}.rms", float(q["rms_per"][i])])
@@ -561,6 +625,16 @@ def main():
     lines += ["",
               f"[3] torque tracking: rms {f2(tau['rms_total'],2) if tau else 'nan'} Nm, "
               f"max {f2(tau['max_abs'],1) if tau else 'nan'} Nm",
+              f"    /realTorque 语义: {torque_semantics}",
+              f"    力矩界 LIM: {'/'.join(f'{x:.0f}' for x in TORQUE_LIMITS)}",
+              (f"    PD 修正量(τ_ff→控制输入): rms {f2(tau_pd['rms_total'],2)} Nm, "
+               f"max {f2(tau_pd['max_abs'],1)} Nm" if tau_pd else
+               "    PD 修正量: n/a"),
+              (f"    钳制损失(控制输入→执行器): rms {f2(tau_clip['rms_total'],3)} Nm, "
+               f"max {f2(tau_clip['max_abs'],1)} Nm" if tau_clip else
+               "    钳制损失: n/a"),
+              f"    ⚠️ /realTorque 采样率低，max 被系统性低估；报峰值请用 /targetTorque"
+              f"（详见 NOTE.md §12.3）",
               f"    joint pos: rms {f2(q['rms_total'],4) if q else 'nan'} rad, "
               f"max {f2(q['max_abs'],3) if q else 'nan'} rad",
               f"    剔除瞬态垃圾窗后: rms {f2(q_excl['rms_total'],4) if q_excl else 'nan'} rad, "
