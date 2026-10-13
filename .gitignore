@@ -31,3 +31,8 @@ experiments/
 .agents/
 .claude/
 skills-lock.json
+
+# sim 数据（2026-10-13 从 experiments/ 迁出，大文件不入版本库）
+# 只留 README.md 说明数据位置与口径，其余不入库
+sim_data/*
+!sim_data/README.md

@@ -1,6 +1,29 @@
 #!/usr/bin/env python3
 """C6 论文图 6.2/6.3/6.4 生成（交付需求 C 规格）。
 
+⚠️⚠️ 数据位置变更（2026-10-13）—— 重画图前务必先读这段
+=====================================================================
+仿真数据 run 目录已从 `experiments/` **迁出到 `sim_data/`**（45 个 run，11GB）：
+
+    新: <repo>/sim_data/<run_name>/{bag/, params.txt, analysis/}
+    旧: <repo>/experiments/<run_name>/...   ← 本脚本下方的路径仍指向这里，已失效
+
+**本脚本尚未改**（作者要求先不画图、后改）。重画时需把所有
+`os.path.join(RA9, "experiments", ...)` 换成 `"sim_data"`：
+    make_fig6.py:67   load_run()          → 读 bag
+    make_fig6.py:353  （另一处读 bag）
+    make_fig6.py:369  glob 扫 run
+    make_fig6.py:568/574/578  读 metrics.csv
+同理 review_data.py:101、gap_sensitivity.py:101、collect.sh:13。
+
+**批次 `_2x` 在 sim_data/，旧批 `_0x` 等仍在 experiments/**。
+论文报力矩峰值**只能用 `_2x`**（旧批 /realTorque 29.4Hz 漏峰 86%）。
+详见 项目记忆.md「待办」与 deliverables/C6/analysis/NOTE.md §12。
+
+用 `RUNS` 选 run 时注意：当前 RUNS 指向旧批 `_0x`（experiments/）；
+重画论文图应换成 sim_data/ 下的 `_2x` 批（sim_base_v{00,01,03}_2{1,2,3}）。
+=====================================================================
+
 规格要点：PNG 300dpi（宽 6.8in）+ 同名 SVG；中文 Noto Sans SC ≥10pt；
 配色 #4285f4 蓝(仿真) / #34a853 绿(参考·计划) / #ea4335 红(超限·偏差) / #555 灰(坐标轴)；
 白底、单位齐全。输出 deliverables/C6/figures/（交付时拷入论文仓 media/C6修改版_media/）。
