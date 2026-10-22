@@ -40,3 +40,6 @@ sim_data/*
 # real 实机数据（2026-10-22 批 42 run，rosbag 不入库）
 real/*
 !real/README.md
+
+# 数据备份（sim/real tar + 校验清单，同盘防误删）
+backup/
