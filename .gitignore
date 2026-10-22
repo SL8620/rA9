@@ -36,3 +36,7 @@ skills-lock.json
 # 只留 README.md 说明数据位置与口径，其余不入库
 sim_data/*
 !sim_data/README.md
+
+# real 实机数据（2026-10-22 批 42 run，rosbag 不入库）
+real/*
+!real/README.md

@@ -4,6 +4,15 @@
 import glob, os, sys
 import numpy as np
 RA9 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# ROS 环境自举：必须在 import make_fig6 之前设好 AMENT_PREFIX_PATH，
+# 否则 make_fig6 顶部的 os.execvp 会把本进程整个替换成 make_fig6.py，
+# 聚合代码一行都跑不到（2026-10-21 修）。
+if "AMENT_PREFIX_PATH" not in os.environ:
+    _cmd = ('source /opt/ros/jazzy/setup.bash 2>/dev/null; '
+            'source %s/install/setup.bash 2>/dev/null; exec python3 "$0" "$@"' % RA9)
+    os.execvp("bash", ["bash", "-c", _cmd, os.path.abspath(__file__)] + sys.argv[1:])
+
 sys.path.insert(0, os.path.join(RA9, "scripts"))
 os.chdir(RA9)
 import importlib.util
@@ -15,7 +24,7 @@ load_run = mf6.load_run
 def f(x, n=2): return f"{x:.{n}f}" if np.isfinite(x) else "NA"
 
 lines = ["# C6 回填底稿（A1/A2 聚合统计）", "",
-         "数字均可由 `analyze_walk.py`/`analyze_push.py` 从 experiments/ 重算；",
+         "数字均可由 `analyze_walk.py`/`analyze_push.py` 从 sim_data/ 重算；",
          "统计窗=各 run 稳态窗；数值取 3 个有效 run 的均值（±run 间 std）。", ""]
 lines += ["## 6.4.1 基座跟踪（A1，三速度 × 3 run）", "",
           "| 指标 | v00 (0.0) | v01 (0.1) | v03 (0.3) |", "|---|---|---|---|"]
@@ -24,7 +33,7 @@ rows = {"vx_mean": [], "vx_std": [], "vx_rmse": [], "height_mean": [], "height_s
 for v, names in mf6.RUNS.items():
     stat = {k: [] for k in rows}
     for n in names:
-        p = os.path.join(RA9, "experiments", n, "analysis", "metrics.csv")
+        p = os.path.join(mf6.run_dir(n), "analysis", "metrics.csv")
         import csv as _csv
         for r in _csv.DictReader(open(p)):
             if r["item"] in stat and r["value"] not in ("", "nan"):
@@ -46,7 +55,7 @@ for v, names in mf6.RUNS.items():
     a, s, dp, da = [], [], [], []
     for n in names:
         import csv as _csv
-        for r in _csv.DictReader(open(os.path.join(RA9, "experiments", n, "analysis", "metrics.csv"))):
+        for r in _csv.DictReader(open(os.path.join(mf6.run_dir(n), "analysis", "metrics.csv"))):
             it = r["item"]
             try: val = float(r["value"])
             except Exception: continue
@@ -67,7 +76,7 @@ for v, names in mf6.RUNS.items():
     tr, tm, qr, qm, pr, cr = [], [], [], [], [], []
     for n in names:
         import csv as _csv
-        for r in _csv.DictReader(open(os.path.join(RA9, "experiments", n, "analysis", "metrics.csv"))):
+        for r in _csv.DictReader(open(os.path.join(mf6.run_dir(n), "analysis", "metrics.csv"))):
             if r["category"] == "torque_tracking" and r["item"] == "rms_total": tr.append(float(r["value"]))
             if r["category"] == "torque_tracking" and r["item"] == "max_abs": tm.append(float(r["value"]))
             if r["category"] == "torque_tracking" and r["item"] == "pd_correction_rms": pr.append(float(r["value"]))
@@ -106,37 +115,69 @@ for name, a, budget in (("MPC", mpc, 10), ("WBC", wbc, 2)):
                  f"p99 {f(np.percentile(a,99))}、max {f(a.max())} ms；"
                  f"超预算率 {100*(a>budget).mean():.2f}%（预算 {budget} ms）")
 
+import re
+
+
+def _grab(pat, txt):
+    m = re.search(pat, txt)
+    return m.group(1) if m else "NA"
+
+
+def _fnum(x):
+    try:
+        return float(x)
+    except Exception:
+        return float("nan")
+
+
+def _ms(txt, label):
+    """mean±run间std；空列表回 NA。"""
+    ok = [x for x in txt if np.isfinite(x)]
+    if not ok:
+        return "NA"
+    return f"{np.mean(ok):.4f}±{np.std(ok):.4f}" if len(ok) > 1 else f"{np.mean(ok):.4f}"
+
+
 lines += ["", "## 6.4.5 扰动与恢复（A2，各格有效样本）", "",
-          "| 工况 | n | dphi_max [rad] | dy_max [m] | t_rec [s] | t_rec_att [s] |",
-          "|---|---|---|---|---|---|"]
+          "FALLEN（`STATUS: INVALID(倒地…)`）不进统计，单列于表后；`n` 为该格有效样本数。",
+          "",
+          "| 工况 | n(REC/FALLEN) | dphi_max [rad] | dth_max [rad] | dy_max [m] | "
+          "t_rec [s] | t_rec_att [s] | hiproll_tau_peak [N.m] | slip_peak [m/s] |",
+          "|---|---|---|---|---|---|---|---|---|"]
+fallen_rows = []
 for cell in ("lat_L1_stand", "lat_L2_stand", "lat_L3_stand", "fwd_L1_stand",
              "fwd_L2_stand", "fwd_L3_stand", "lat_L1_walk", "lat_L2_walk", "lat_L3_walk"):
-    dp, dy, tr, tra = [], [], [], []
-    for p in sorted(glob.glob(f"experiments/sim_push_{cell}_*/analysis/push_summary.txt")):
+    cols = {k: [] for k in ("dp", "dth", "dy", "tr", "tra", "hp", "sl")}
+    n_fall = 0
+    for p in sorted(glob.glob(f"sim_data/sim_push_{cell}_*/analysis/push_summary.txt")):
         txt = open(p).read()
         if "注入疑似未生效" in txt or "注入前已倒地" in txt:
             continue
-        import re
-        def grab(pat):
-            m = re.search(pat, txt); return m.group(1) if m else "NA"
+        run = p.split(os.sep)[-3]
+        if txt.startswith("STATUS: INVALID"):
+            n_fall += 1
+            fallen_rows.append((run, _grab(r"dphi_max=([0-9.]+)", txt),
+                                _grab(r"dy_max=([0-9.]+)", txt),
+                                _grab(r"hiproll_tau_peak=([0-9.]+)", txt)))
+            continue
+        cols["dp"].append(_fnum(_grab(r"dphi_max=([0-9.]+)", txt)))
+        cols["dth"].append(_fnum(_grab(r"dtheta_max=([0-9.]+)", txt)))
+        cols["dy"].append(_fnum(_grab(r"dy_max=([0-9.]+)", txt)))
+        cols["hp"].append(_fnum(_grab(r"hiproll_tau_peak=([0-9.]+)", txt)))
+        cols["sl"].append(_fnum(_grab(r"slip_peak=([0-9.]+)", txt)))
+        cols["tr"].append(_fnum(_grab(r"t_rec=([0-9.]+) ", txt)
+                                if _grab(r"t_rec=([0-9.]+) ", txt) != "NA"
+                                else _grab(r"t_rec=(NA\S*)", txt)))
+        cols["tra"].append(_fnum(_grab(r"t_rec_att\(仅姿态 eps\) -> ([0-9.]+|NA)", txt)))
+    n_ok = len(cols["dp"])
+    lines.append(f"| {cell} | {n_ok}/{n_fall} | " +
+                 " | ".join(_ms(cols[k], k) for k in
+                            ("dp", "dth", "dy", "tr", "tra", "hp", "sl")) + " |")
 
-        def fnum(x):
-            try: return float(x)
-            except Exception: return float("nan")
-        dp.append(fnum(grab(r"dphi_max=([0-9.]+)")))
-        dy.append(fnum(grab(r"dy_max=([0-9.]+)")))
-        t = grab(r"t_rec=([0-9.]+) ")
-        if t == "NA":
-            t = grab(r"t_rec=(NA\S*)")
-        tr.append(fnum(t))
-        x = grab(r"t_rec_att\(仅姿态 eps\) -> ([0-9.]+|NA)")
-        tra.append(fnum(x))
-    n_ = len(dp)
-    tr_ok = [x for x in tr if np.isfinite(x)]
-    tra_ok = [x for x in tra if np.isfinite(x)]
-    lines.append(f"| {cell} | {n_} | {f(np.mean(dp),4)} | {f(np.mean(dy),4)} | "
-                 f"{f(np.mean(tr_ok)) if tr_ok else 'NA(多未恢复)'} | "
-                 f"{f(np.mean(tra_ok)) if tra_ok else 'NA'} |")
+lines += ["", "FALLEN 样本（推力致倒，按交付需求 D 保留为证据，不进上表统计）：", "",
+          "| run | dphi_max [rad] | dy_max [m] | hiproll_tau_peak [N.m] |", "|---|---|---|---|"]
+for run, dp, dy, hp in fallen_rows:
+    lines.append(f"| {run} | {dp} | {dy} | {hp} |")
 
 out = os.path.join(RA9, "deliverables/C6/analysis/summary_stats.md")
 open(out, "w").write("\n".join(lines) + "\n")
